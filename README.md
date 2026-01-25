@@ -305,10 +305,15 @@ HoloEngineRuntime/
 │   │   │   ├── axisGridRenderer.js  # 坐标轴网格渲染器
 │   │   │   ├── colmapPrograms.js    # ColmapUtil 专用 programs
 │   │   │   └── depthVisualizationRenderer.js  # 深度可视化
-│   │   └── shaders/             # 着色器
+│   │   └── shaders/             # 核心着色器（点云、线段、深度等）
 │   │       ├── pointCloudShaders.js
 │   │       ├── linesShaders.js
 │   │       └── depthVisualizationShaders.js
+│   ├── shaders/                  # useWebGL 用 shaders（4DGS、mesh、3DGS）
+│   │   ├── index.js
+│   │   ├── splatShaders.js
+│   │   ├── meshShaders.js
+│   │   └── gaussian3dShaders.js
 │   ├── hooks/                    # React Hooks
 │   │   ├── useWebGL.js          # WebGL 上下文管理
 │   │   ├── useCameraControls.js # 相机控制
@@ -340,19 +345,15 @@ HoloEngineRuntime/
 
 **无外部依赖** - HoloEngineRuntime 是自包含的，所有功能都在包内。
 
-注意：`useWebGL` Hook 需要从项目根目录的 `shaders` 文件夹导入 shader 源码（这是 Holotech 项目的特定需求，其他项目可能需要调整）。
+**Shaders 内置**：4DGS splat、mesh、3DGS 等 shader 已放在包内 `src/shaders/`（`splatShaders`、`meshShaders`、`gaussian3dShaders`），`useWebGL` 从 `../shaders` 导入，无需宿主项目提供 shaders。
 
 ## 注意事项
 
-1. **Shader 路径**：`useWebGL` Hook 需要导入 shader 源码
-   - 在 Holotech 项目中：路径为 `../../../shaders`（相对于 `src/HoloEngineRuntime/src/hooks/`）
-   - 在其他项目中：需要根据项目结构调整 `src/hooks/useWebGL.js` 中的 shader 导入路径
-   - 或者：将 shader 文件复制到 HoloEngine 内部，使用相对路径导入
-   - 详细说明见上面的"处理 Shader 导入"部分
+1. **Shader 路径**：`useWebGL` 从包内 `../shaders` 导入（`src/shaders/`），与 Holotech 同源，无需额外配置。
 
-2. **Gizmo 状态**：`useCameraControls` 使用 `globalGizmoDragging` 来防止在 Gizmo 拖拽时更新相机
+2. **Gizmo 状态**：`useCameraControls` 使用 `globalGizmoDragging` 来防止在 Gizmo 拖拽时更新相机。
 
-3. **渲染循环**：需要在 `requestAnimationFrame` 中调用 `updateCameraFromInput`
+3. **渲染循环**：需要在 `requestAnimationFrame` 中调用 `updateCameraFromInput`。
 
 4. **内部路径**：HoloEngineRuntime 内部使用相对路径，所有导入都是相对于 `src/` 目录的
    - `src/hooks/` → `../core/utils/` （相对路径）
@@ -402,29 +403,9 @@ module.exports = {
 };
 ```
 
-#### 3. 处理 Shader 导入
+#### 3. Shader 与 useWebGL
 
-`useWebGL` Hook 需要导入 shader 源码。有两种方式：
-
-**方式 1：调整 shader 路径（推荐）**
-
-如果项目有自己的 shader 文件，修改 `HoloEngineRuntime/src/hooks/useWebGL.js`：
-
-```js
-// 原路径（Holotech 项目）
-import { vertexShaderSource } from '../../../shaders';
-
-// 修改为你的项目路径
-import { vertexShaderSource } from '../path/to/your/shaders';
-```
-
-**方式 2：复制 shader 到 HoloEngine**
-
-将 shader 文件复制到 `HoloEngineRuntime/src/shaders/`，然后修改导入路径：
-
-```js
-import { vertexShaderSource } from '../src/shaders';
-```
+Shaders（4DGS、mesh、3DGS）已内置在 `src/shaders/`，`useWebGL` 从 `../shaders` 导入，无需项目额外提供。若需自定义，可替换包内 `src/shaders/` 对应文件或修改 `useWebGL` 导入路径。
 
 #### 4. 使用 HoloEngine
 

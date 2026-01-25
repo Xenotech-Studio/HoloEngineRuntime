@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createShader, createProgram } from '../core/utils/webgl';
-import { vertexShaderSource, fragmentShaderSource } from '../../../shaders';
-import { meshVertexShaderSource, meshFragmentShaderSource } from '../../../shaders/meshShaders';
-import { vertexShader3DGSSource, fragmentShader3DGSSource } from '../../../shaders/gaussian3dShaders';
+import { vertexShaderSource, fragmentShaderSource } from '../shaders';
+import { meshVertexShaderSource, meshFragmentShaderSource } from '../shaders/meshShaders';
+import { vertexShader3DGSSource, fragmentShader3DGSSource } from '../shaders/gaussian3dShaders';
 
 /**
  * WebGL 上下文和程序管理 Hook
