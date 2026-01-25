@@ -35,6 +35,8 @@ export { useWebGL } from './src/hooks/useWebGL';
 export { useCameraControls } from './src/hooks/useCameraControls';
 export { useAutoInterpCamera } from './src/hooks/useAutoInterpCamera';
 export { usePanView } from './src/hooks/usePanView';
+export { usePlyLoader, loadPlyFile } from './src/hooks/usePlyLoader';
+export { useSplatLoader } from './src/hooks/useSplatLoader';
 
 // Components
 export { default as HoloEngineRuntime } from './src/components/HoloEngineRuntime';
@@ -42,3 +44,8 @@ export { default as HoloEngineRuntime } from './src/components/HoloEngineRuntime
 // Utils
 export * from './src/utils/raycasting';
 export { globalGizmoDragging } from './src/utils/gizmoState';
+export { createDepthWorker } from './src/utils/depthWorker';
+export { loadAndSetup3DGSObject, create3DGSTexture, create3DGSIndexBuffer, create3DGSWorker } from './src/utils/ply3dgsLoader';
+export { loadAndSetupSplatObject, createSplatTexture, createSplatIndexBuffer, createSplatWorker, loadSplatObject } from './src/utils/splatObjectLoader';
+export { loadAndSetupMeshObject, parseOBJ, loadOBJFile, createMeshBuffers } from './src/utils/meshLoader';
+export { SceneManager, SplatObject } from './src/utils/sceneManager';

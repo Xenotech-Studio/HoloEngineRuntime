@@ -1,12 +1,12 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useWebGL } from '../hooks/useWebGL';
-import { useSplatLoader } from '../../../hooks/useSplatLoader';
+import { useSplatLoader } from '../hooks/useSplatLoader';
 import { useCameraControls } from '../hooks/useCameraControls';
-import { loadAndSetupSplatObject } from '../../../utils/splatObjectLoader';
-import { loadAndSetupMeshObject } from '../../../utils/meshLoader';
+import { loadAndSetupSplatObject } from '../utils/splatObjectLoader';
+import { loadAndSetupMeshObject } from '../utils/meshLoader';
 import { getViewMatrix, createTransformMatrix, getProjectionMatrix, calculateDynamicFocal, multiply4, getGLErrorName } from '../core/utils/webgl';
 import { initAxisGridRenderer } from '../core/utils/axisGridRenderer';
-import { SceneManager } from '../../../utils/sceneManager';
+import { SceneManager } from '../utils/sceneManager';
 import { HoloRP, RenderableObject, RenderType } from '../core/utils/holoRP';
 import { CanvasRenderTarget } from '../core/utils/renderTarget';
 

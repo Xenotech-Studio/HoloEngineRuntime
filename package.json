@@ -33,8 +33,15 @@
     "./hooks/useCameraControls": "./src/hooks/useCameraControls.js",
     "./hooks/useAutoInterpCamera": "./src/hooks/useAutoInterpCamera.js",
     "./hooks/usePanView": "./src/hooks/usePanView.js",
+    "./hooks/usePlyLoader": "./src/hooks/usePlyLoader.js",
+    "./hooks/useSplatLoader": "./src/hooks/useSplatLoader.js",
     "./components/HoloEngineRuntime": "./src/components/HoloEngineRuntime.jsx",
     "./utils/raycasting": "./src/utils/raycasting.js",
-    "./utils/gizmoState": "./src/utils/gizmoState.js"
+    "./utils/gizmoState": "./src/utils/gizmoState.js",
+    "./utils/depthWorker": "./src/utils/depthWorker.js",
+    "./utils/ply3dgsLoader": "./src/utils/ply3dgsLoader.js",
+    "./utils/splatObjectLoader": "./src/utils/splatObjectLoader.js",
+    "./utils/meshLoader": "./src/utils/meshLoader.js",
+    "./utils/sceneManager": "./src/utils/sceneManager.js"
   }
 }
