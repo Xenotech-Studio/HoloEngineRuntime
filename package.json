@@ -1,0 +1,40 @@
+{
+  "name": "holoengineruntime",
+  "version": "0.1.0",
+  "description": "HoloEngineRuntime - Unified rendering engine with WebGL, camera controls, and raycasting",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "src",
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "webgl",
+    "webgl2",
+    "rendering",
+    "3d",
+    "gaussian-splatting",
+    "camera-controls",
+    "raycasting",
+    "react"
+  ],
+  "author": "",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./core": "./src/core/utils/holoRP.js",
+    "./core/webgl": "./src/core/utils/webgl.js",
+    "./core/renderTarget": "./src/core/utils/renderTarget.js",
+    "./core/axisGridRenderer": "./src/core/utils/axisGridRenderer.js",
+    "./core/colmapPrograms": "./src/core/utils/colmapPrograms.js",
+    "./hooks/useWebGL": "./src/hooks/useWebGL.js",
+    "./hooks/useCameraControls": "./src/hooks/useCameraControls.js",
+    "./hooks/useAutoInterpCamera": "./src/hooks/useAutoInterpCamera.js",
+    "./hooks/usePanView": "./src/hooks/usePanView.js",
+    "./components/HoloEngineRuntime": "./src/components/HoloEngineRuntime.jsx",
+    "./utils/raycasting": "./src/utils/raycasting.js",
+    "./utils/gizmoState": "./src/utils/gizmoState.js"
+  }
+}

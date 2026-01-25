@@ -1,0 +1,17 @@
+# HoloEngine .gitignore
+
+# 如果作为独立仓库，忽略这些
+node_modules/
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
