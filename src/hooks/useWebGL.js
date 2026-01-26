@@ -176,6 +176,11 @@ export function useWebGL(canvasRef, options = {}) {
         lightIntensity: glContext.getUniformLocation(meshShaderProgram, 'lightIntensity'),
         ambientIntensity: glContext.getUniformLocation(meshShaderProgram, 'ambientIntensity'),
         debugMode: glContext.getUniformLocation(meshShaderProgram, 'debugMode'),
+        // 背面渲染相关 uniform
+        cameraPosition: glContext.getUniformLocation(meshShaderProgram, 'cameraPosition'),
+        backFaceColor: glContext.getUniformLocation(meshShaderProgram, 'backFaceColor'),
+        backFaceOpacity: glContext.getUniformLocation(meshShaderProgram, 'backFaceOpacity'),
+        showBackFace: glContext.getUniformLocation(meshShaderProgram, 'showBackFace'),
       };
 
       const positionLoc = glContext.getAttribLocation(meshShaderProgram, 'position');
