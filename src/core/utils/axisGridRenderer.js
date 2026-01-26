@@ -140,19 +140,11 @@ void main() {
 }
 
 /**
- * 渲染坐标轴和网格
+ * 设置渲染状态（公共逻辑）
+ * @private
  */
-export function renderAxisGrid(gl, renderer, projectionMatrix, viewMatrix) {
-  const { program, buffers, attributes, uniforms } = renderer;
-
-  // 保存当前状态
-  const prevProgram = gl.getParameter(gl.CURRENT_PROGRAM);
-  const prevDepthTest = gl.isEnabled(gl.DEPTH_TEST);
-  const prevDepthMask = gl.getParameter(gl.DEPTH_WRITEMASK);
-  const prevBlend = gl.isEnabled(gl.BLEND);
-  const prevBlendSrc = gl.getParameter(gl.BLEND_SRC_RGB);
-  const prevBlendDst = gl.getParameter(gl.BLEND_DST_RGB);
-  const prevLineWidth = gl.getParameter(gl.LINE_WIDTH);
+function setupRenderState(gl, renderer, projectionMatrix, viewMatrix) {
+  const { program, attributes, uniforms } = renderer;
   
   // 使用轴网格程序
   gl.useProgram(program);
@@ -173,6 +165,52 @@ export function renderAxisGrid(gl, renderer, projectionMatrix, viewMatrix) {
   // 设置 attribute
   gl.enableVertexAttribArray(attributes.position);
   gl.enableVertexAttribArray(attributes.color);
+}
+
+/**
+ * 恢复渲染状态（公共逻辑）
+ * @private
+ */
+function restoreRenderState(gl, prevState) {
+  gl.useProgram(prevState.program);
+  if (!prevState.depthTest) gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(prevState.depthMask);
+  if (!prevState.blend) gl.disable(gl.BLEND);
+  gl.blendFunc(prevState.blendSrc, prevState.blendDst);
+  gl.lineWidth(prevState.lineWidth);
+  gl.disableVertexAttribArray(prevState.attributes.position);
+  gl.disableVertexAttribArray(prevState.attributes.color);
+}
+
+/**
+ * 保存当前渲染状态
+ * @private
+ */
+function saveRenderState(gl, renderer) {
+  return {
+    program: gl.getParameter(gl.CURRENT_PROGRAM),
+    depthTest: gl.isEnabled(gl.DEPTH_TEST),
+    depthMask: gl.getParameter(gl.DEPTH_WRITEMASK),
+    blend: gl.isEnabled(gl.BLEND),
+    blendSrc: gl.getParameter(gl.BLEND_SRC_RGB),
+    blendDst: gl.getParameter(gl.BLEND_DST_RGB),
+    lineWidth: gl.getParameter(gl.LINE_WIDTH),
+    attributes: renderer.attributes,
+  };
+}
+
+/**
+ * 渲染网格
+ * @param {WebGL2RenderingContext} gl - WebGL 上下文
+ * @param {Object} renderer - 渲染器对象
+ * @param {Float32Array} projectionMatrix - 投影矩阵
+ * @param {Float32Array} viewMatrix - 视图矩阵
+ */
+export function renderGrid(gl, renderer, projectionMatrix, viewMatrix) {
+  const prevState = saveRenderState(gl, renderer);
+  setupRenderState(gl, renderer, projectionMatrix, viewMatrix);
+  
+  const { buffers, attributes } = renderer;
   
   // 绘制网格（细线）
   gl.lineWidth(1.0);
@@ -180,6 +218,22 @@ export function renderAxisGrid(gl, renderer, projectionMatrix, viewMatrix) {
   gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
   gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
   gl.drawArrays(gl.LINES, 0, buffers.grid.count);
+  
+  restoreRenderState(gl, prevState);
+}
+
+/**
+ * 渲染坐标轴
+ * @param {WebGL2RenderingContext} gl - WebGL 上下文
+ * @param {Object} renderer - 渲染器对象
+ * @param {Float32Array} projectionMatrix - 投影矩阵
+ * @param {Float32Array} viewMatrix - 视图矩阵
+ */
+export function renderAxes(gl, renderer, projectionMatrix, viewMatrix) {
+  const prevState = saveRenderState(gl, renderer);
+  setupRenderState(gl, renderer, projectionMatrix, viewMatrix);
+  
+  const { buffers, attributes } = renderer;
   
   // 绘制坐标轴（粗线）
   gl.lineWidth(3.0);
@@ -202,14 +256,18 @@ export function renderAxisGrid(gl, renderer, projectionMatrix, viewMatrix) {
   gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
   gl.drawArrays(gl.LINES, 0, buffers.zAxis.count);
   
-  // 恢复状态
-  gl.useProgram(prevProgram);
-  if (!prevDepthTest) gl.disable(gl.DEPTH_TEST);
-  gl.depthMask(prevDepthMask);  // 恢复深度写入状态
-  if (!prevBlend) gl.disable(gl.BLEND);
-  gl.blendFunc(prevBlendSrc, prevBlendDst);  // 恢复混合函数
-  gl.lineWidth(prevLineWidth);
-  gl.disableVertexAttribArray(attributes.position);
-  gl.disableVertexAttribArray(attributes.color);
+  restoreRenderState(gl, prevState);
+}
+
+/**
+ * 渲染坐标轴和网格（便捷函数，同时渲染两者）
+ * @param {WebGL2RenderingContext} gl - WebGL 上下文
+ * @param {Object} renderer - 渲染器对象
+ * @param {Float32Array} projectionMatrix - 投影矩阵
+ * @param {Float32Array} viewMatrix - 视图矩阵
+ */
+export function renderAxisGrid(gl, renderer, projectionMatrix, viewMatrix) {
+  renderGrid(gl, renderer, projectionMatrix, viewMatrix);
+  renderAxes(gl, renderer, projectionMatrix, viewMatrix);
 }
 
