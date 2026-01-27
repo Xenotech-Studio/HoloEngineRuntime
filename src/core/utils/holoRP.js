@@ -12,10 +12,11 @@ import { DepthVisualizationRenderer } from './depthVisualizationRenderer';
  * 渲染类型枚举
  */
 export const RenderType = {
-  '4DGS': '4dgs',  // 4D Gaussian Splatting（动态/时间相关）
-  '3DGS': '3dgs',  // 3D Gaussian Splatting（静态，支持SH）
-  MESH: 'mesh',    // 网格模型
-  LINES: 'lines'   // 线段（相机锥体、连线等）
+  '4DGS': '4dgs',       // 4D Gaussian Splatting（动态/时间相关）
+  '3DGS': '3dgs',       // 3D Gaussian Splatting（静态，支持SH）
+  MESH: 'mesh',         // 网格模型
+  LINES: 'lines',       // 线段（相机锥体、连线等）
+  POINT_CLOUD: 'point_cloud'  // 点云（纯色 quad，无时间/高斯）
 };
 
 /**
@@ -52,6 +53,12 @@ export class RenderableObject {
     this.colorBuffer = null;      // WebGLBuffer (color r,g,b) - 用于LINES
     this.linesVertexCount = 0;    // 顶点数（线段数 * 2）
 
+    // POINT_CLOUD 相关资源（每点 xyz + rgb，instanced quad）
+    this.pointPositionBuffer = null;  // WebGLBuffer (N × x,y,z)
+    this.pointColorBuffer = null;     // WebGLBuffer (N × r,g,b)，0–1 float
+    this.pointCount = 0;
+    this.pointSize = 2.0;             // 点尺寸（像素），对象内部参数
+
     // 通用资源
     this.modelMatrix = null;       // 4x4 模型变换矩阵（如果为 null 则使用单位矩阵）
     this.ready = false;            // 是否准备好渲染
@@ -80,6 +87,9 @@ export class RenderableObject {
     if (this.renderType === RenderType.LINES) {
       return this.ready && this.positionBuffer && this.linesVertexCount >= 2;
     }
+    if (this.renderType === RenderType.POINT_CLOUD) {
+      return this.ready && this.pointPositionBuffer && this.pointColorBuffer && this.pointCount > 0;
+    }
     return false;
   }
 }
@@ -88,7 +98,7 @@ export class RenderableObject {
  * Holo 渲染管线类
  */
 export class HoloRP {
-  constructor(gl, splatProgram, splat3DGSProgram, meshProgram, splatUniforms, splat3DGSUniforms, meshUniforms, splatAttributes, splat3DGSAttributes, meshAttributes, colmapOptions = {}) {
+  constructor(gl, splatProgram, splat3DGSProgram, meshProgram, splatUniforms, splat3DGSUniforms, meshUniforms, splatAttributes, splat3DGSAttributes, meshAttributes, extendedOptions = {}) {
     this.gl = gl;
     
     // 向后兼容：检测参数数量
@@ -145,12 +155,15 @@ export class HoloRP {
     this.uniforms = this.splatUniforms;
     this.attributes = this.splatAttributes;
     
-    // ColmapUtil：线段（可选）
-    const opts = colmapOptions && typeof colmapOptions === 'object' ? colmapOptions : {};
+    // 扩展能力：线段、点云（可选，由业务传入）
+    const opts = extendedOptions && typeof extendedOptions === 'object' ? extendedOptions : {};
     this.linesProgram = opts.linesProgram || null;
     this.linesUniforms = opts.linesUniforms || null;
     this.linesAttributes = opts.linesAttributes || null;
-    
+    this.pointCloudProgram = opts.pointCloudProgram || null;
+    this.pointCloudUniforms = opts.pointCloudUniforms || null;
+    this.pointCloudAttributes = opts.pointCloudAttributes || null;
+
     // 渲染对象列表
     this.objects = new Map(); // id -> RenderableObject
     
@@ -395,7 +408,9 @@ export class HoloRP {
     
     const hasSplat = !!(this.splatProgram && this.splatUniforms);
     const hasLines = !!(this.linesProgram && this.linesUniforms);
-    if (!gl || (!hasSplat && !hasLines)) {
+    const hasPointCloud = !!(this.pointCloudProgram && this.pointCloudUniforms);
+    const hasMesh = !!this.meshProgram;
+    if (!gl || (!hasSplat && !hasLines && !hasPointCloud && !hasMesh)) {
       return;
     }
 
@@ -552,7 +567,8 @@ export class HoloRP {
       const gsObjects = [];  // 4DGS和3DGS对象
       const meshObjects = [];
       const lineObjects = [];
-      
+      const pointCloudObjects = [];
+
       for (const obj of objects) {
         if (obj.renderType === RenderType['4DGS'] || obj.renderType === RenderType['3DGS']) {
           gsObjects.push(obj);
@@ -560,6 +576,8 @@ export class HoloRP {
           meshObjects.push(obj);
         } else if (obj.renderType === RenderType.LINES) {
           lineObjects.push(obj);
+        } else if (obj.renderType === RenderType.POINT_CLOUD) {
+          pointCloudObjects.push(obj);
         }
       }
 
@@ -612,21 +630,28 @@ export class HoloRP {
           gl.uniform1f(this.meshUniforms.ambientIntensity, 0.6);
         }
         
-        // 绑定默认纹理到 TEXTURE0（即使不使用，sampler 也需要绑定有效纹理）
-        if (this.meshUniforms.diffuseTexture !== undefined && this.meshUniforms.diffuseTexture !== null) {
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, this.defaultTexture);
-          gl.uniform1i(this.meshUniforms.diffuseTexture, 0);
-        }
-        
         // 设置调试模式（-1=正常光照, 0=法线颜色）
         if (this.meshUniforms.debugMode !== undefined && this.meshUniforms.debugMode !== null) {
           gl.uniform1i(this.meshUniforms.debugMode, this.meshDebugMode !== undefined && this.meshDebugMode !== null ? this.meshDebugMode : -1);
         }
-        
+
         for (const obj of meshObjects) {
+          const tex = obj.diffuseTexture != null ? obj.diffuseTexture : this.defaultTexture;
+          if (this.meshUniforms.diffuseTexture != null) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.uniform1i(this.meshUniforms.diffuseTexture, 0);
+          }
+          if (this.meshUniforms.useTexture != null) {
+            gl.uniform1i(this.meshUniforms.useTexture, obj.diffuseTexture != null ? 1 : 0);
+          }
           this._renderMesh(obj, viewMatrix, projectionMatrix);
         }
+      }
+
+      // 渲染点云（纯色 quad，无混合，在 4DGS/3DGS 之前）
+      if (pointCloudObjects.length > 0 && this.pointCloudProgram && this.pointCloudUniforms) {
+        this._renderPointCloud(pointCloudObjects, viewMatrix, projectionMatrix, viewInfo);
       }
 
       // 再渲染所有 4DGS/3DGS（使用 alpha blending 和深度测试）
@@ -1005,6 +1030,76 @@ export class HoloRP {
     gl.disableVertexAttribArray(attrs.position);
   }
 
+  /**
+   * 渲染 POINT_CLOUD 对象组
+   * 每点一个固定尺寸的纯色 quad，无时间插值、无高斯参数。
+   * @private
+   */
+  _renderPointCloud(objects, viewMatrix, projectionMatrix, viewInfo) {
+    const gl = this.gl;
+    const prog = this.pointCloudProgram;
+    const uniforms = this.pointCloudUniforms;
+    const attrs = this.pointCloudAttributes;
+    if (!prog || !uniforms || !attrs) return;
+
+    gl.useProgram(prog);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+
+    if (uniforms.projection && projectionMatrix) {
+      gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
+    }
+    if (uniforms.view && viewMatrix) {
+      gl.uniformMatrix4fv(uniforms.view, false, viewMatrix);
+    }
+    if (uniforms.viewport && viewInfo && viewInfo.viewport) {
+      gl.uniform2f(uniforms.viewport, viewInfo.viewport.width, viewInfo.viewport.height);
+    }
+
+    const aPosition = attrs.position;
+    const aInstancePos = attrs.instancePos;
+    const aInstanceColor = attrs.instanceColor;
+    const quadBuf = this.vertexBuffer;
+    if (!quadBuf || aPosition < 0 || aInstancePos < 0 || aInstanceColor < 0) return;
+
+    gl.enableVertexAttribArray(aPosition);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(aPosition, 0);
+
+    for (const obj of objects) {
+      if (!obj.isReady()) continue;
+      const model = obj.getModelMatrix();
+      if (uniforms.model) {
+        gl.uniformMatrix4fv(uniforms.model, false, model);
+      }
+      const ptSize = typeof obj.pointSize === 'number' ? obj.pointSize : 2.0;
+      if (uniforms.pointSize !== undefined && uniforms.pointSize !== null) {
+        gl.uniform1f(uniforms.pointSize, ptSize);
+      }
+
+      gl.enableVertexAttribArray(aInstancePos);
+      gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
+      gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(aInstancePos, 1);
+
+      gl.enableVertexAttribArray(aInstanceColor);
+      gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointColorBuffer);
+      gl.vertexAttribPointer(aInstanceColor, 3, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(aInstanceColor, 1);
+
+      gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.pointCount);
+
+      gl.vertexAttribDivisor(aInstancePos, 0);
+      gl.vertexAttribDivisor(aInstanceColor, 0);
+      gl.disableVertexAttribArray(aInstancePos);
+      gl.disableVertexAttribArray(aInstanceColor);
+    }
+
+    gl.disableVertexAttribArray(aPosition);
+  }
 
   /**
    * 清理资源

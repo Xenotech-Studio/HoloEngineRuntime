@@ -38,30 +38,31 @@ export default function HoloEngineRuntime({
 }) {
   // 移除调试日志 - 功能已正常工作
   
-  const { gl, program, program3DGS, meshProgram, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, error: webGLError } = useWebGL(canvasRef, { antialias: false });
+  const { gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes, error: webGLError } = useWebGL(canvasRef, { antialias: false });
   
   const animationFrameRef = useRef(null);
   const renderPipelineRef = useRef(null);
-  const renderTargetRef = useRef(null); // Canvas 渲染目标
+  const renderTargetRef = useRef(null);
   
-  // 初始化渲染管线和渲染目标
   useEffect(() => {
-    if (!gl || !program || !uniforms || !attributes || !canvasRef.current) {
-      return;
-    }
+    if (!gl || !program || !uniforms || !attributes || !canvasRef.current) return;
     
-    // 创建渲染管线实例（支持 mesh、4DGS 和 3DGS 渲染）
+    const extendedOptions = {};
+    if (programPointCloud && pointCloudUniforms && pointCloudAttributes) {
+      extendedOptions.pointCloudProgram = programPointCloud;
+      extendedOptions.pointCloudUniforms = pointCloudUniforms;
+      extendedOptions.pointCloudAttributes = pointCloudAttributes;
+    }
+    if (programLines && linesUniforms && linesAttributes) {
+      extendedOptions.linesProgram = programLines;
+      extendedOptions.linesUniforms = linesUniforms;
+      extendedOptions.linesAttributes = linesAttributes;
+    }
     const pipeline = new HoloRP(
-      gl, 
-      program,  // 4DGS program
-      program3DGS,  // 3DGS program
-      meshProgram || program,  // 如果没有 meshProgram，使用 splat program
-      uniforms,  // 4DGS uniforms
-      uniforms3DGS,  // 3DGS uniforms
-      meshUniforms || uniforms,
-      attributes,  // 4DGS attributes
-      attributes3DGS,  // 3DGS attributes
-      meshAttributes || attributes
+      gl, program, program3DGS, meshProgram || program,
+      uniforms, uniforms3DGS, meshUniforms || uniforms,
+      attributes, attributes3DGS, meshAttributes || attributes,
+      extendedOptions
     );
     pipeline.initAxisGrid(initAxisGridRenderer);
     pipeline.setTargetVerticalFOV(targetVerticalFOV);
@@ -81,7 +82,7 @@ export default function HoloEngineRuntime({
         renderTargetRef.current = null;
       }
     };
-  }, [gl, program, meshProgram, uniforms, attributes, meshUniforms, meshAttributes]); // 移除 targetVerticalFOV 依赖，避免重新创建渲染管线
+  }, [gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes]);
 
   // 单独更新 FOV（不重新创建渲染管线）
   useEffect(() => {

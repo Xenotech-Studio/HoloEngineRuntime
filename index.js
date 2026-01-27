@@ -47,4 +47,6 @@ export { createDepthWorker } from './src/utils/depthWorker';
 export { loadAndSetup3DGSObject, create3DGSTexture, create3DGSIndexBuffer, create3DGSWorker } from './src/utils/ply3dgsLoader';
 export { loadAndSetupSplatObject, createSplatTexture, createSplatIndexBuffer, createSplatWorker, loadSplatObject } from './src/utils/splatObjectLoader';
 export { loadAndSetupMeshObject, parseOBJ, loadOBJFile, createMeshBuffers } from './src/utils/meshLoader';
+export { createPointCloudBuffers, createPointCloudObject } from './src/utils/pointCloudLoader';
+export { createLinesObject, updateLinesObject } from './src/utils/linesLoader';
 export { SceneManager, SplatObject } from './src/utils/sceneManager';

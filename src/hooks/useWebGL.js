@@ -3,6 +3,8 @@ import { createShader, createProgram } from '../core/utils/webgl';
 import { vertexShaderSource, fragmentShaderSource } from '../shaders';
 import { meshVertexShaderSource, meshFragmentShaderSource } from '../shaders/meshShaders';
 import { vertexShader3DGSSource, fragmentShader3DGSSource } from '../shaders/gaussian3dShaders';
+import { pointCloudVertexShaderSource, pointCloudFragmentShaderSource } from '../shaders/pointCloudShaders';
+import { linesVertexShaderSource, linesFragmentShaderSource } from '../core/shaders/linesShaders';
 
 /**
  * WebGL 上下文和程序管理 Hook
@@ -12,6 +14,8 @@ export function useWebGL(canvasRef, options = {}) {
   const [program, setProgram] = useState(null);  // 4DGS program
   const [program3DGS, setProgram3DGS] = useState(null);  // 3DGS program
   const [meshProgram, setMeshProgram] = useState(null);
+  const [programPointCloud, setProgramPointCloud] = useState(null);
+  const [programLines, setProgramLines] = useState(null);
   const [error, setError] = useState(null);
   const uniformsRef = useRef({});
   const attributesRef = useRef({});
@@ -19,6 +23,10 @@ export function useWebGL(canvasRef, options = {}) {
   const attributes3DGSRef = useRef({});
   const meshUniformsRef = useRef({});
   const meshAttributesRef = useRef({});
+  const pointCloudUniformsRef = useRef({});
+  const pointCloudAttributesRef = useRef({});
+  const linesUniformsRef = useRef({});
+  const linesAttributesRef = useRef({});
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -103,6 +111,54 @@ export function useWebGL(canvasRef, options = {}) {
         const info = glContext.getProgramInfoLog(shaderProgram3DGS);
         console.error('[useWebGL] 3DGS Program 链接失败:', info);
       }
+
+      // 创建点云 shaders / program
+      const pcVs = createShader(glContext, glContext.VERTEX_SHADER, pointCloudVertexShaderSource);
+      const pcFs = createShader(glContext, glContext.FRAGMENT_SHADER, pointCloudFragmentShaderSource);
+      if (!glContext.getShaderParameter(pcVs, glContext.COMPILE_STATUS)) {
+        console.error('[useWebGL] 点云 VS 编译失败:', glContext.getShaderInfoLog(pcVs));
+      }
+      if (!glContext.getShaderParameter(pcFs, glContext.COMPILE_STATUS)) {
+        console.error('[useWebGL] 点云 FS 编译失败:', glContext.getShaderInfoLog(pcFs));
+      }
+      const shaderProgramPointCloud = createProgram(glContext, pcVs, pcFs);
+      glContext.deleteShader(pcVs);
+      glContext.deleteShader(pcFs);
+      if (!glContext.getProgramParameter(shaderProgramPointCloud, glContext.LINK_STATUS)) {
+        console.error('[useWebGL] 点云 Program 链接失败:', glContext.getProgramInfoLog(shaderProgramPointCloud));
+      }
+      glContext.useProgram(shaderProgramPointCloud);
+      pointCloudUniformsRef.current = {
+        projection: glContext.getUniformLocation(shaderProgramPointCloud, 'projection'),
+        view: glContext.getUniformLocation(shaderProgramPointCloud, 'view'),
+        model: glContext.getUniformLocation(shaderProgramPointCloud, 'model'),
+        viewport: glContext.getUniformLocation(shaderProgramPointCloud, 'viewport'),
+        pointSize: glContext.getUniformLocation(shaderProgramPointCloud, 'pointSize'),
+      };
+      pointCloudAttributesRef.current = {
+        position: glContext.getAttribLocation(shaderProgramPointCloud, 'position'),
+        instancePos: glContext.getAttribLocation(shaderProgramPointCloud, 'instancePos'),
+        instanceColor: glContext.getAttribLocation(shaderProgramPointCloud, 'instanceColor'),
+      };
+
+      const lnVs = createShader(glContext, glContext.VERTEX_SHADER, linesVertexShaderSource);
+      const lnFs = createShader(glContext, glContext.FRAGMENT_SHADER, linesFragmentShaderSource);
+      const shaderProgramLines = createProgram(glContext, lnVs, lnFs);
+      glContext.deleteShader(lnVs);
+      glContext.deleteShader(lnFs);
+      if (!glContext.getProgramParameter(shaderProgramLines, glContext.LINK_STATUS)) {
+        console.error('[useWebGL] 线段 Program 链接失败:', glContext.getProgramInfoLog(shaderProgramLines));
+      }
+      glContext.useProgram(shaderProgramLines);
+      linesUniformsRef.current = {
+        projection: glContext.getUniformLocation(shaderProgramLines, 'projection'),
+        view: glContext.getUniformLocation(shaderProgramLines, 'view'),
+        model: glContext.getUniformLocation(shaderProgramLines, 'model'),
+      };
+      linesAttributesRef.current = {
+        position: glContext.getAttribLocation(shaderProgramLines, 'position'),
+        color: glContext.getAttribLocation(shaderProgramLines, 'color'),
+      };
 
       // 设置 WebGL 状态
       glContext.disable(glContext.DEPTH_TEST);
@@ -205,10 +261,9 @@ export function useWebGL(canvasRef, options = {}) {
         uv: uvLoc,
       };
 
-      // 切换回 splat program
       glContext.useProgram(shaderProgram);
 
-      // 设置顶点缓冲区
+      // 设置顶点缓冲区（4DGS quad）
       const triangleVertices = new Float32Array([-2, -2, 2, -2, 2, 2, -2, 2]);
       const vertexBuffer = glContext.createBuffer();
       glContext.bindBuffer(glContext.ARRAY_BUFFER, vertexBuffer);
@@ -236,10 +291,11 @@ export function useWebGL(canvasRef, options = {}) {
       setProgram(shaderProgram);
       setProgram3DGS(shaderProgram3DGS);
       setMeshProgram(meshShaderProgram);
+      setProgramPointCloud(shaderProgramPointCloud);
+      setProgramLines(shaderProgramLines);
       setError(null);
 
       return () => {
-        // 清理资源
         if (vertexShader) glContext.deleteShader(vertexShader);
         if (fragmentShader) glContext.deleteShader(fragmentShader);
         if (shaderProgram) glContext.deleteProgram(shaderProgram);
@@ -249,6 +305,8 @@ export function useWebGL(canvasRef, options = {}) {
         if (meshVertexShader) glContext.deleteShader(meshVertexShader);
         if (meshFragmentShader) glContext.deleteShader(meshFragmentShader);
         if (meshShaderProgram) glContext.deleteProgram(meshShaderProgram);
+        if (shaderProgramPointCloud) glContext.deleteProgram(shaderProgramPointCloud);
+        if (shaderProgramLines) glContext.deleteProgram(shaderProgramLines);
         if (vertexBuffer) glContext.deleteBuffer(vertexBuffer);
         if (indexBuffer) glContext.deleteBuffer(indexBuffer);
         if (texture) glContext.deleteTexture(texture);
@@ -261,15 +319,21 @@ export function useWebGL(canvasRef, options = {}) {
 
   return {
     gl,
-    program,  // 4DGS program
-    program3DGS,  // 3DGS program
+    program,
+    program3DGS,
     meshProgram,
+    programPointCloud,
+    programLines,
     uniforms: uniformsRef.current,
     attributes: attributesRef.current,
     uniforms3DGS: uniforms3DGSRef.current,
     attributes3DGS: attributes3DGSRef.current,
     meshUniforms: meshUniformsRef.current,
     meshAttributes: meshAttributesRef.current,
+    pointCloudUniforms: pointCloudUniformsRef.current,
+    pointCloudAttributes: pointCloudAttributesRef.current,
+    linesUniforms: linesUniformsRef.current,
+    linesAttributes: linesAttributesRef.current,
     error
   };
 }

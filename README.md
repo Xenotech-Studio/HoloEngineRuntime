@@ -7,7 +7,7 @@
 ## 功能
 
 ### Core（原 holo-rp-core）
-- **HoloRP** - 核心渲染管线，支持 4DGS/3DGS/MESH/LINES
+- **HoloRP** - 核心渲染管线，支持 4DGS/3DGS/MESH/LINES/POINT_CLOUD
 - **RenderTarget** - 渲染目标抽象（Canvas / WebXR）
 - **AxisGridRenderer** - 坐标轴和网格渲染
 - **WebGL 工具** - 矩阵、着色器、相机等工具函数
@@ -152,7 +152,10 @@ const pipeline = new HoloRP(
   {
     linesProgram,
     linesUniforms,
-    linesAttributes
+    linesAttributes,
+    pointCloudProgram,
+    pointCloudUniforms,
+    pointCloudAttributes
   }
 );
 ```
@@ -177,6 +180,7 @@ pipeline.addObject(obj);
 - `RenderType['3DGS']` - 3D Gaussian Splatting
 - `RenderType.MESH` - 网格模型
 - `RenderType.LINES` - 线段
+- `RenderType.POINT_CLOUD` - 点云（每点一纯色 quad，无时间插值、无高斯参数）
 
 #### `CanvasRenderTarget`
 
@@ -190,6 +194,23 @@ pipeline.render(renderTarget);
 ```
 
 ### Utils
+
+#### `createPointCloudObject(gl, id, positions, colors)` / `createPointCloudBuffers(gl, positions, colors)`
+
+点云渲染：从 `positions`（N×3 xyz）、`colors`（N×3 rgb 0–1）创建 `RenderableObject` 或 WebGL buffer。每点渲染为固定像素大小的纯色 quad。将对象 `pipeline.addObject(obj)` 后即可绘制。
+
+```js
+import { createPointCloudObject, HoloRP, RenderType } from '@holoengineruntime';
+
+const obj = createPointCloudObject(gl, 'points', positions, colors);
+pipeline.addObject(obj);
+```
+
+点尺寸由 `RenderableObject.pointSize`（默认 2，像素）控制，也可通过 `createPointCloudObject(..., pointSize)` 传入。
+
+#### `createLinesObject(gl, id, positions, colors)` / `updateLinesObject(gl, obj, positions, colors)`
+
+线段渲染：从 `positions`（N×3）、`colors`（N×3，rgb 0–1）创建 LINES `RenderableObject`，或更新已有对象的 buffer。与 `pipeline.addObject` 配合使用。
 
 #### `screenToRay(screenX, screenY, viewMatrix, projectionMatrix, canvasWidth, canvasHeight)`
 
@@ -411,17 +432,12 @@ import { HoloRP, useWebGL } from './HoloEngineRuntime';
 import { HoloRP } from '@holoengineruntime';
 ```
 
-## 迁移到 ColmapUtil
+## 在业务项目中使用
 
-这个封装层可以直接复制到 ColmapUtil 项目中使用：
+封装层可复制或作为 git submodule 接入业务项目：
 
-1. 复制整个 `HoloEngineRuntime` 文件夹（或作为 git submodule）
-2. 确保 shader 文件路径正确（可能需要调整 `useWebGL.js` 中的导入路径）
-3. 根据 ColmapUtil 的需求调整相机控制方式
-4. 使用 `HoloEngineRuntime` 组件作为参考实现自己的渲染组件
+1. 复制 `HoloEngineRuntime` 或 `git submodule add` 引入
+2. 配置构建别名 `@holoengineruntime` 指向该目录
+3. 用 `useWebGL`、`HoloRP`、`createPointCloudObject` / `createLinesObject` 等实现渲染；线段、点云等通过 `extendedOptions` 传入管线
 
-**优势**：
-- ✅ 所有功能在一个包中，无需单独的 holo-rp-core
-- ✅ 统一的导入接口
-- ✅ 完整的文档和示例
-- ✅ 可以作为 git submodule 复用
+**优势**：功能集中、统一导入、便于复用。
