@@ -7,11 +7,10 @@
 ## 功能
 
 ### Core（原 holo-rp-core）
-- **HoloRP** - 核心渲染管线，支持 4DGS/3DGS/MESH/POINT_CLOUD/LINES
+- **HoloRP** - 核心渲染管线，支持 4DGS/3DGS/MESH/LINES
 - **RenderTarget** - 渲染目标抽象（Canvas / WebXR）
 - **AxisGridRenderer** - 坐标轴和网格渲染
 - **WebGL 工具** - 矩阵、着色器、相机等工具函数
-- **ColmapPrograms** - ColmapUtil 专用的点云和线段 programs
 
 ### React 集成
 - **WebGL 管理** - `useWebGL` Hook，管理 WebGL2 上下文和 shader programs
@@ -151,9 +150,6 @@ const pipeline = new HoloRP(
   splat3DGSAttributes,
   meshAttributes,
   {
-    pointCloudProgram,
-    pointCloudUniforms,
-    pointCloudAttributes,
     linesProgram,
     linesUniforms,
     linesAttributes
@@ -166,10 +162,10 @@ const pipeline = new HoloRP(
 渲染对象类，表示要渲染的 3D 对象。
 
 ```js
-const obj = new RenderableObject('my-object', RenderType.POINT_CLOUD);
-obj.positionBuffer = gl.createBuffer();
-obj.colorBuffer = gl.createBuffer();
-obj.pointCount = 1000;
+const obj = new RenderableObject('my-object', RenderType.MESH);
+obj.vertexBuffer = gl.createBuffer();
+obj.elementBuffer = gl.createBuffer();
+obj.elementCount = 1000;
 obj.ready = true;
 pipeline.addObject(obj);
 ```
@@ -180,7 +176,6 @@ pipeline.addObject(obj);
 - `RenderType['4DGS']` - 4D Gaussian Splatting
 - `RenderType['3DGS']` - 3D Gaussian Splatting
 - `RenderType.MESH` - 网格模型
-- `RenderType.POINT_CLOUD` - 点云
 - `RenderType.LINES` - 线段
 
 #### `CanvasRenderTarget`
@@ -192,23 +187,6 @@ import { CanvasRenderTarget } from '@holoengineruntime';
 
 const renderTarget = new CanvasRenderTarget(canvas, gl);
 pipeline.render(renderTarget);
-```
-
-#### `createColmapPrograms(gl)`
-
-创建 ColmapUtil 专用的点云和线段 programs。
-
-```js
-import { createColmapPrograms } from '@holoengineruntime';
-
-const { 
-  pointCloudProgram, 
-  pointCloudUniforms, 
-  pointCloudAttributes,
-  linesProgram,
-  linesUniforms,
-  linesAttributes
-} = createColmapPrograms(gl);
 ```
 
 ### Utils
@@ -303,10 +281,8 @@ HoloEngineRuntime/
 │   │   │   ├── holoRP.js        # 核心渲染管线
 │   │   │   ├── renderTarget.js  # 渲染目标（Canvas/WebXR）
 │   │   │   ├── axisGridRenderer.js  # 坐标轴网格渲染器
-│   │   │   ├── colmapPrograms.js    # ColmapUtil 专用 programs
 │   │   │   └── depthVisualizationRenderer.js  # 深度可视化
-│   │   └── shaders/             # 核心着色器（点云、线段、深度等）
-│   │       ├── pointCloudShaders.js
+│   │   └── shaders/             # 核心着色器（线段、深度等，点云shader待实现）
 │   │       ├── linesShaders.js
 │   │       └── depthVisualizationShaders.js
 │   ├── shaders/                  # useWebGL 用 shaders（4DGS、mesh、3DGS）
@@ -416,7 +392,6 @@ import {
   useWebGL, 
   useCameraControls, 
   screenToRay,
-  createColmapPrograms
 } from '@holoengineruntime';
 
 // 或直接从 core 导入

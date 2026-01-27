@@ -15,7 +15,6 @@ export const RenderType = {
   '4DGS': '4dgs',  // 4D Gaussian Splatting（动态/时间相关）
   '3DGS': '3dgs',  // 3D Gaussian Splatting（静态，支持SH）
   MESH: 'mesh',    // 网格模型
-  POINT_CLOUD: 'point_cloud',  // 点云（ColmapUtil 等）
   LINES: 'lines'   // 线段（相机锥体、连线等）
 };
 
@@ -48,13 +47,9 @@ export class RenderableObject {
     this.elementCount = 0;        // 索引数量 (mesh用)
     this.vertexAttributes = null;  // 顶点属性配置 {position, normal, uv, stride}
 
-    // POINT_CLOUD 相关资源
-    this.positionBuffer = null;   // WebGLBuffer (position x,y,z)
-    this.colorBuffer = null;      // WebGLBuffer (color r,g,b)
-    this.pointCount = 0;
-    this.pointSize = 1;
-
     // LINES 相关资源（positionBuffer/colorBuffer 复用，或 linesVertexCount）
+    this.positionBuffer = null;   // WebGLBuffer (position x,y,z) - 用于LINES
+    this.colorBuffer = null;      // WebGLBuffer (color r,g,b) - 用于LINES
     this.linesVertexCount = 0;    // 顶点数（线段数 * 2）
 
     // 通用资源
@@ -81,9 +76,6 @@ export class RenderableObject {
     }
     if (this.renderType === RenderType.MESH) {
       return this.ready && this.vertexBuffer && this.elementBuffer && this.elementCount > 0;
-    }
-    if (this.renderType === RenderType.POINT_CLOUD) {
-      return this.ready && this.positionBuffer && this.pointCount > 0;
     }
     if (this.renderType === RenderType.LINES) {
       return this.ready && this.positionBuffer && this.linesVertexCount >= 2;
@@ -153,11 +145,8 @@ export class HoloRP {
     this.uniforms = this.splatUniforms;
     this.attributes = this.splatAttributes;
     
-    // ColmapUtil：点云 / 线段（可选）
+    // ColmapUtil：线段（可选）
     const opts = colmapOptions && typeof colmapOptions === 'object' ? colmapOptions : {};
-    this.pointCloudProgram = opts.pointCloudProgram || null;
-    this.pointCloudUniforms = opts.pointCloudUniforms || null;
-    this.pointCloudAttributes = opts.pointCloudAttributes || null;
     this.linesProgram = opts.linesProgram || null;
     this.linesUniforms = opts.linesUniforms || null;
     this.linesAttributes = opts.linesAttributes || null;
@@ -405,9 +394,8 @@ export class HoloRP {
     const gl = this.gl;
     
     const hasSplat = !!(this.splatProgram && this.splatUniforms);
-    const hasPointCloud = !!(this.pointCloudProgram && this.pointCloudUniforms);
     const hasLines = !!(this.linesProgram && this.linesUniforms);
-    if (!gl || (!hasSplat && !hasPointCloud && !hasLines)) {
+    if (!gl || (!hasSplat && !hasLines)) {
       return;
     }
 
@@ -563,7 +551,6 @@ export class HoloRP {
       
       const gsObjects = [];  // 4DGS和3DGS对象
       const meshObjects = [];
-      const pointCloudObjects = [];
       const lineObjects = [];
       
       for (const obj of objects) {
@@ -571,8 +558,6 @@ export class HoloRP {
           gsObjects.push(obj);
         } else if (obj.renderType === RenderType.MESH) {
           meshObjects.push(obj);
-        } else if (obj.renderType === RenderType.POINT_CLOUD) {
-          pointCloudObjects.push(obj);
         } else if (obj.renderType === RenderType.LINES) {
           lineObjects.push(obj);
         }
@@ -664,11 +649,6 @@ export class HoloRP {
       // 绘制 LINES 对象（相机锥体、连线等）
       if (lineObjects.length > 0 && this.linesProgram && this.linesUniforms) {
         this._renderLines(lineObjects, viewMatrix, projectionMatrix);
-      }
-
-      // 绘制 POINT_CLOUD 对象
-      if (pointCloudObjects.length > 0 && this.pointCloudProgram && this.pointCloudUniforms) {
-        this._renderPointCloud(pointCloudObjects, viewMatrix, projectionMatrix);
       }
 
       // 绘制坐标轴和网格（如果启用）- 只在第一个视图绘制（避免重复）
@@ -1025,52 +1005,6 @@ export class HoloRP {
     gl.disableVertexAttribArray(attrs.position);
   }
 
-  /**
-   * 渲染 POINT_CLOUD 对象组
-   * @private
-   */
-  _renderPointCloud(objects, viewMatrix, projectionMatrix) {
-    const gl = this.gl;
-    const prog = this.pointCloudProgram;
-    const uniforms = this.pointCloudUniforms;
-    const attrs = this.pointCloudAttributes;
-    if (!prog || !uniforms || !attrs) return;
-
-    gl.useProgram(prog);
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
-
-    if (uniforms.projection && projectionMatrix) {
-      gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
-    }
-    if (uniforms.view && viewMatrix) {
-      gl.uniformMatrix4fv(uniforms.view, false, viewMatrix);
-    }
-
-    for (const obj of objects) {
-      if (!obj.isReady()) continue;
-      const model = obj.getModelMatrix();
-      if (uniforms.model) {
-        gl.uniformMatrix4fv(uniforms.model, false, model);
-      }
-      const size = obj.pointSize != null ? obj.pointSize : 1;
-      if (uniforms.pointSize != null) {
-        gl.uniform1f(uniforms.pointSize, size);
-      }
-
-      gl.enableVertexAttribArray(attrs.position);
-      gl.enableVertexAttribArray(attrs.color);
-      const buf = obj.positionBuffer;
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.vertexAttribPointer(attrs.position, 3, gl.FLOAT, false, 24, 0);
-      gl.vertexAttribPointer(attrs.color, 3, gl.FLOAT, false, 24, 12);
-      gl.drawArrays(gl.POINTS, 0, obj.pointCount);
-      gl.disableVertexAttribArray(attrs.color);
-      gl.disableVertexAttribArray(attrs.position);
-    }
-  }
 
   /**
    * 清理资源

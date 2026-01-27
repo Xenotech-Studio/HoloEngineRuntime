@@ -26,7 +26,6 @@
 export { HoloRP, RenderableObject, RenderType } from './src/core/utils/holoRP';
 export { CanvasRenderTarget, WebXRRenderTarget, RenderTarget } from './src/core/utils/renderTarget';
 export { initAxisGridRenderer, renderAxisGrid, renderGrid, renderAxes } from './src/core/utils/axisGridRenderer';
-export { createColmapPrograms } from './src/core/utils/colmapPrograms';
 export * from './src/core/utils/webgl';
 export { DepthVisualizationRenderer } from './src/core/utils/depthVisualizationRenderer';
 

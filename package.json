@@ -28,7 +28,6 @@
     "./core/webgl": "./src/core/utils/webgl.js",
     "./core/renderTarget": "./src/core/utils/renderTarget.js",
     "./core/axisGridRenderer": "./src/core/utils/axisGridRenderer.js",
-    "./core/colmapPrograms": "./src/core/utils/colmapPrograms.js",
     "./hooks/useWebGL": "./src/hooks/useWebGL.js",
     "./hooks/useCameraControls": "./src/hooks/useCameraControls.js",
     "./hooks/useAutoInterpCamera": "./src/hooks/useAutoInterpCamera.js",

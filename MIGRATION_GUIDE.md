@@ -59,8 +59,7 @@ import {
   HoloRP, 
   RenderableObject, 
   RenderType,
-  CanvasRenderTarget,
-  createColmapPrograms
+  CanvasRenderTarget
 } from '@holoengineruntime';
 
 // 方式 2：从子路径导入
@@ -129,12 +128,10 @@ resolve: {
 ```js
 // 旧方式
 import { HoloRP } from '@holorp/utils/holoRP';
-import { createColmapPrograms } from '@holorp/utils/colmapPrograms';
 
 // 新方式
 import { 
   HoloRP, 
-  createColmapPrograms,
   useWebGL,
   useCameraControls,
   screenToRay
