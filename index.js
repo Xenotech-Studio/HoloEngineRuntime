@@ -12,7 +12,8 @@
  * ```js
  * import { 
  *   useWebGL, 
- *   useCameraControls, 
+ *   useFpsCameraControl,
+ *   useOrbitCameraControl,
  *   screenToRay, 
  *   HoloEngineRuntime,
  *   HoloRP,
@@ -27,11 +28,13 @@ export { HoloRP, RenderableObject, RenderType } from './src/core/utils/holoRP';
 export { CanvasRenderTarget, WebXRRenderTarget, RenderTarget } from './src/core/utils/renderTarget';
 export { initAxisGridRenderer, renderAxisGrid, renderGrid, renderAxes } from './src/core/utils/axisGridRenderer';
 export * from './src/core/utils/webgl';
+export { Camera } from './src/core/utils/Camera';
 export { DepthVisualizationRenderer } from './src/core/utils/depthVisualizationRenderer';
 
 // Hooks
 export { useWebGL } from './src/hooks/useWebGL';
-export { useCameraControls } from './src/hooks/useCameraControls';
+export { useFpsCameraControl } from './src/hooks/useFpsCameraControl';
+export { useOrbitCameraControl } from './src/hooks/useOrbitCameraControl';
 export { useAutoInterpCamera } from './src/hooks/useAutoInterpCamera';
 export { usePanView } from './src/hooks/usePanView';
 export { usePlyLoader, loadPlyFile } from './src/hooks/usePlyLoader';

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useWebGL } from '../hooks/useWebGL';
 import { useSplatLoader } from '../hooks/useSplatLoader';
-import { useCameraControls } from '../hooks/useCameraControls';
+import { useFpsCameraControl } from '../hooks/useFpsCameraControl';
+import { useOrbitCameraControl } from '../hooks/useOrbitCameraControl';
 import { loadAndSetupSplatObject } from '../utils/splatObjectLoader';
 import { loadAndSetupMeshObject } from '../utils/meshLoader';
 import { getViewMatrix, createTransformMatrix, getProjectionMatrix, calculateDynamicFocal, multiply4, getGLErrorName } from '../core/utils/webgl';
+import { Camera } from '../core/utils/Camera';
 import { initAxisGridRenderer } from '../core/utils/axisGridRenderer';
 import { SceneManager } from '../utils/sceneManager';
 import { HoloRP, RenderableObject, RenderType } from '../core/utils/holoRP';
@@ -29,6 +31,7 @@ export default function HoloEngineRuntime({
   meshDebugMode = 0, // Mesh 调试模式：0=法线颜色, 1=位置颜色, 2=法线长度, 3=法线-位置差异
   selectedObjectId = null, // 选中的对象ID，用于计算距离以调整移动速度
   cameraSpeedMultiplier = 0.5, // 相机移动速度倍率（由 EditorViewer 计算）
+  cameraMode = 'fly', // 相机模式：'fly' (FPS) 或 'orbit'，默认 'fly'（向前兼容）
   showDepthVisualization = false, // 是否显示深度可视化
   depthRange = 30.0, // 深度范围（米），用于调整颜色渐变的最远距离
   depthRangeNear = 10.0, // 近处深度范围（米），用于调整颜色渐变的起始距离
@@ -65,7 +68,6 @@ export default function HoloEngineRuntime({
       extendedOptions
     );
     pipeline.initAxisGrid(initAxisGridRenderer);
-    pipeline.setTargetVerticalFOV(targetVerticalFOV);
     renderPipelineRef.current = pipeline;
     
     // 创建 Canvas 渲染目标
@@ -85,9 +87,10 @@ export default function HoloEngineRuntime({
   }, [gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes]);
 
   // 单独更新 FOV（不重新创建渲染管线）
+  // FOV 仅存在 Camera.targetVerticalFOV；HoloRP 用其 projectionMatrix getter
   useEffect(() => {
-    if (renderPipelineRef.current) {
-      renderPipelineRef.current.setTargetVerticalFOV(targetVerticalFOV);
+    if (cameraRef.current && cameraRef.current instanceof Camera) {
+      cameraRef.current.targetVerticalFOV = targetVerticalFOV;
     }
   }, [targetVerticalFOV]);
 
@@ -139,37 +142,44 @@ export default function HoloEngineRuntime({
     }
   }, [centerOpacityThreshold]);
 
-  // 获取默认相机
+  // 获取默认相机（使用 Camera 类）
   const getDefaultCamera = useCallback(() => {
-    return {
+    return new Camera({
       id: 0,
       width: 1920,
       height: 1080,
-      position: [0, 0, 0],
-      rotation: [
-        [1, 0, 0],   // right
-        [0, 1, 0],   // up
-        [0, 0, 1],   // forward
-      ],
-      fx: 1000,
-      fy: 1000,
+      position: [0, 0, 15],  // 默认位置稍微向后，便于观察
       yawRad: 0,
       pitchRad: 0,
       forwardHorizontalRef: [0, 0, 1],
       worldUp: [0, 1, 0],
-    };
-  }, []);
+      fx: 1000,
+      fy: 1000,
+      targetVerticalFOV: targetVerticalFOV,
+    });
+  }, [targetVerticalFOV]);
 
+
+  // 将外部传入的 camera 转换为 Camera 实例（如果是普通对象）
+  const normalizedCamera = useMemo(() => {
+    if (!camera) return null;
+    // 如果已经是 Camera 实例，直接返回
+    if (camera instanceof Camera) {
+      return camera;
+    }
+    // 如果是普通对象，转换为 Camera 实例
+    return Camera.fromPlainObject(camera);
+  }, [camera]);
 
   const initialViewMatrix = useMemo(() => {
     if (skipFileCameraInit) {
       const defaultCamera = getDefaultCamera();
-      return getViewMatrix(defaultCamera);
-    } else if (camera) {
-      return getViewMatrix(camera);
+      return defaultCamera.viewMatrix;
+    } else if (normalizedCamera) {
+      return normalizedCamera.viewMatrix;
     }
     return [0.99, 0.01, -0.14, 0, 0.02, 0.99, 0.12, 0, 0.14, -0.12, 0.98, 0, -0.09, -0.26, 0.2, 1];
-  }, [skipFileCameraInit, camera, getDefaultCamera]);
+  }, [skipFileCameraInit, normalizedCamera, getDefaultCamera]);
   
   const viewMatrixRef = useRef(initialViewMatrix);
   
@@ -178,23 +188,23 @@ export default function HoloEngineRuntime({
     if (skipFileCameraInit) {
       if (!viewMatrixRef.current || viewMatrixRef.current.length !== 16) {
         const defaultCamera = getDefaultCamera();
-        viewMatrixRef.current = getViewMatrix(defaultCamera);
+        viewMatrixRef.current = defaultCamera.viewMatrix;
       }
-    } else if (camera) {
+    } else if (normalizedCamera) {
       if (!viewMatrixRef.current || viewMatrixRef.current.length !== 16) {
-        viewMatrixRef.current = getViewMatrix(camera);
+        viewMatrixRef.current = normalizedCamera.viewMatrix;
       }
     }
     
     if (onViewMatrixRefReady && viewMatrixRef.current) {
       onViewMatrixRefReady(viewMatrixRef);
     }
-  }, [skipFileCameraInit, camera, getDefaultCamera, onViewMatrixRefReady]);
+  }, [skipFileCameraInit, normalizedCamera, getDefaultCamera, onViewMatrixRefReady]);
   
-  // 相机控制相关的 refs
+  // 相机控制相关的 refs（确保都是 Camera 实例）
   const initialCameraRefValue = skipFileCameraInit 
     ? getDefaultCamera() 
-    : (camera || getDefaultCamera());
+    : (normalizedCamera || getDefaultCamera());
   const cameraRef = useRef(initialCameraRefValue);
   const camerasRef = useRef([initialCameraRefValue]);
   const [camerasVersion, setCamerasVersion] = useState(0);
@@ -211,25 +221,44 @@ export default function HoloEngineRuntime({
           const defaultCamera = getDefaultCamera();
           cameraRef.current = defaultCamera;
           camerasRef.current = [defaultCamera];
-          const defaultViewMatrix = getViewMatrix(defaultCamera);
-          viewMatrixRef.current = defaultViewMatrix;
+          viewMatrixRef.current = defaultCamera.viewMatrix;
           camerasVersionBump();
         }
       } else {
         if (!cameraRef.current) {
-          cameraRef.current = camera || getDefaultCamera();
+          cameraRef.current = normalizedCamera || getDefaultCamera();
         }
       }
       cameraInitializedRef.current = true;
+    }
+
+    // 确保 cameraRef.current 始终是 Camera 实例
+    if (cameraRef.current && !(cameraRef.current instanceof Camera)) {
+      try {
+        cameraRef.current = Camera.fromPlainObject(cameraRef.current);
+        // 同时更新 camerasRef
+        if (camerasRef.current && camerasRef.current.length > 0) {
+          const index = camerasRef.current.findIndex(cam => cam === cameraRef.current || (cam && !(cam instanceof Camera)));
+          if (index >= 0) {
+            camerasRef.current[index] = cameraRef.current;
+          }
+        }
+      } catch (error) {
+        console.error('[HoloEngineRuntime] Failed to convert camera to Camera instance:', error);
+        // 如果转换失败，使用默认相机
+        cameraRef.current = getDefaultCamera();
+      }
     }
     
     if (onCameraRefReady && cameraRef.current && cameraInitializedRef.current) {
       onCameraRefReady(cameraRef);
     }
-  }, [camera, skipFileCameraInit, getDefaultCamera, onCameraRefReady]);
+  }, [normalizedCamera, skipFileCameraInit, getDefaultCamera, onCameraRefReady]);
   
-  // 集成相机控制
-  const { updateCameraFromInput } = useCameraControls(
+  // 集成相机控制 - 直接使用对应的相机控制 hook
+  const isOrbitMode = cameraMode === 'orbit';
+  
+  const fpsControls = useFpsCameraControl(
     canvasRef,
     viewMatrixRef,
     cameraRef,
@@ -248,8 +277,34 @@ export default function HoloEngineRuntime({
     null, // worldUpPitchAdjust
     null, // onNotifyUserInput
     disableLeftMouseButton,
-    cameraSpeedMultiplier // 相机移动速度倍率（由 EditorViewer 计算）
+    cameraSpeedMultiplier, // 相机移动速度倍率（由 EditorViewer 计算）
+    !isOrbitMode // enabled: 只在非 Orbit 模式时启用
   );
+  
+  const orbitControls = useOrbitCameraControl(
+    canvasRef,
+    viewMatrixRef,
+    cameraRef,
+    camerasRef,
+    (newViewMatrix) => {
+      if (newViewMatrix && newViewMatrix.length === 16) {
+        viewMatrixRef.current = newViewMatrix;
+      }
+    },
+    (nextCamera) => {
+      if (nextCamera) {
+        cameraRef.current = nextCamera;
+      }
+    },
+    camerasVersion,
+    null, // worldUpPitchAdjust
+    null, // onNotifyUserInput
+    disableLeftMouseButton,
+    cameraSpeedMultiplier, // 相机移动速度倍率（由 EditorViewer 计算）
+    isOrbitMode // enabled: 只在 Orbit 模式时启用
+  );
+  
+  const { updateCameraFromInput } = isOrbitMode ? orbitControls : fpsControls;
 
   // 加载所有场景对象相关的 refs
   const loadingRef = useRef(new Set());
@@ -553,12 +608,14 @@ export default function HoloEngineRuntime({
                 const canvasHeight = canvas.clientHeight || canvas.height || window.innerHeight;
                 const activeCamera = cameraRef.current;
                 
-                const { fx, fy } = calculateDynamicFocal(targetVerticalFOV, canvasWidth, canvasHeight, activeCamera.fx, activeCamera.fy);
-                const projectionMatrix = getProjectionMatrix(fx, fy, canvasWidth, canvasHeight);
-                const viewMatrix = viewMatrixRef.current;
+                // 更新相机的宽高（如果 canvas 尺寸变化）
+                activeCamera.width = canvasWidth;
+                activeCamera.height = canvasHeight;
+                
+                const projectionMatrix = activeCamera.projectionMatrix;
+                const viewMatrix = activeCamera.viewMatrix;
                 const currentModelMatrix = obj.getModelMatrix ? obj.getModelMatrix() : createTransformMatrix(obj.position, obj.rotation.map(deg => (deg * Math.PI) / 180), obj.scale);
-                const viewModel = multiply4(viewMatrix, currentModelMatrix);
-                const viewProj = multiply4(projectionMatrix, viewModel);
+                const viewProj = activeCamera.getViewProjModelMatrix(currentModelMatrix);
                 
                 if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16 && obj.worker) {
                   obj.worker.postMessage({ view: viewProj });
@@ -615,12 +672,13 @@ export default function HoloEngineRuntime({
               const canvasWidth = canvas ? (canvas.clientWidth || canvas.width || window.innerWidth) : window.innerWidth;
               const canvasHeight = canvas ? (canvas.clientHeight || canvas.height || window.innerHeight) : window.innerHeight;
               const activeCamera = cameraRef.current || getDefaultCamera();
-              const { fx: dynamicFx, fy: dynamicFy } = calculateDynamicFocal(targetVerticalFOV, canvasWidth, canvasHeight, activeCamera.fx, activeCamera.fy);
-              const projectionMatrix = getProjectionMatrix(dynamicFx, dynamicFy, canvasWidth, canvasHeight);
-              const viewMatrix = viewMatrixRef.current;
+              
+              // 更新相机的宽高（如果 canvas 尺寸变化）
+              activeCamera.width = canvasWidth;
+              activeCamera.height = canvasHeight;
+              
               const modelMatrix = obj.getModelMatrix(createTransformMatrix);
-              const viewModel = multiply4(viewMatrix, modelMatrix);
-              const viewProj = multiply4(projectionMatrix, viewModel);
+              const viewProj = activeCamera.getViewProjModelMatrix(modelMatrix);
               worker.postMessage({ view: viewProj });
               
               // Worker的第一次深度排序完成后会通过onmessage回调标记为就绪
@@ -682,10 +740,18 @@ export default function HoloEngineRuntime({
 
     // 更新渲染管线的视图矩阵和相机
     const pipeline = renderPipelineRef.current;
-    if (viewMatrixRef.current) {
-      pipeline.setViewMatrix(viewMatrixRef.current);
-    }
     if (cameraRef.current) {
+      // 更新相机的 canvas 尺寸（如果变化）
+      const canvasWidth = canvas.clientWidth || canvas.width || window.innerWidth;
+      const canvasHeight = canvas.clientHeight || canvas.height || window.innerHeight;
+      if (cameraRef.current.width !== canvasWidth || cameraRef.current.height !== canvasHeight) {
+        cameraRef.current.width = canvasWidth;
+        cameraRef.current.height = canvasHeight;
+      }
+      
+      // 使用 Camera 类的 viewMatrix getter
+      pipeline.setViewMatrix(cameraRef.current.viewMatrix);
+      // 传递 Camera 实例；HoloRP 用其 projectionMatrix getter（含 targetVerticalFOV）
       pipeline.setCamera(cameraRef.current);
     }
 

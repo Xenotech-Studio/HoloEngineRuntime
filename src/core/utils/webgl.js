@@ -87,8 +87,17 @@ export function getProjectionMatrix(fx, fy, width, height) {
 /**
  * 获取视图矩阵
  * 使用与原始 hybrid.js 相同的计算方式
+ * 支持 Camera 类实例或普通对象
+ * @param {Camera|Object} camera - Camera 实例或普通相机对象
+ * @returns {Array<number>} 4x4 视图矩阵（列主序，16 元素数组）
  */
 export function getViewMatrix(camera) {
+  // 如果 camera 是 Camera 类实例，直接使用其 viewMatrix getter
+  if (camera && typeof camera.viewMatrix !== 'undefined' && typeof camera.viewMatrix === 'object') {
+    return camera.viewMatrix;
+  }
+
+  // 向后兼容：处理普通对象
   const R = camera.rotation.flat();
   const t = camera.position;
   const camToWorld = [

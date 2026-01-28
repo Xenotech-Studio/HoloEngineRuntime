@@ -3,10 +3,11 @@
  * 只负责渲染多个模型和处理视角变换，不包含业务逻辑（如模型加载、用户交互等）
  */
 
-import { getProjectionMatrix, calculateDynamicFocal, multiply4, identity4, createTransformMatrix } from './webgl';
+import { multiply4, identity4, createTransformMatrix } from './webgl';
 import { renderAxisGrid } from './axisGridRenderer';
 import { RenderTarget, CanvasRenderTarget } from './renderTarget';
 import { DepthVisualizationRenderer } from './depthVisualizationRenderer';
+import { Camera } from './Camera';
 
 /**
  * 渲染类型枚举
@@ -175,8 +176,7 @@ export class HoloRP {
     
     // 渲染状态
     this.viewMatrix = null;          // 当前视图矩阵
-    this.camera = null;               // 当前相机对象（用于计算投影矩阵）
-    this.targetVerticalFOV = null;   // 目标垂直 FOV（可选）
+    this.camera = null;               // Camera 实例（用于投影矩阵，须含 targetVerticalFOV）
     this.enableAxisGrid = true;      // 是否启用坐标轴和网格渲染（默认启用）
     this.meshDebugMode = -1;         // Mesh 调试模式：-1=正常光照, 0=法线颜色（调试）
     this.showDepthVisualization = false; // 是否显示深度可视化
@@ -295,14 +295,6 @@ export class HoloRP {
    */
   setCamera(camera) {
     this.camera = camera;
-  }
-
-  /**
-   * 设置目标垂直 FOV
-   * @param {number|null} fov - 目标垂直 FOV（角度），如果为 null 则使用相机的 fx/fy
-   */
-  setTargetVerticalFOV(fov) {
-    this.targetVerticalFOV = fov;
   }
 
   /**
@@ -468,20 +460,23 @@ export class HoloRP {
     let computedProjectionMatrix = null;
     if (renderTarget instanceof CanvasRenderTarget) {
       const viewport = renderTarget.currentView.viewport;
-      const activeCamera = this.camera || { fx: 1000, fy: 1000 };
-      const { fx, fy } = calculateDynamicFocal(
-        this.targetVerticalFOV,
-        viewport.width,
-        viewport.height,
-        activeCamera.fx,
-        activeCamera.fy
-      );
-      computedProjectionMatrix = getProjectionMatrix(fx, fy, viewport.width, viewport.height);
-      
-      // 设置到 CanvasRenderTarget
+      let activeCamera = this.camera;
+      if (!activeCamera || !(activeCamera instanceof Camera)) {
+        console.warn('[HoloRP] camera 须为 Camera 实例，已使用默认 Camera');
+        activeCamera = new Camera({
+          width: viewport.width,
+          height: viewport.height,
+          fx: 1000,
+          fy: 1000,
+          targetVerticalFOV: null,
+        });
+      }
+      activeCamera.width = viewport.width;
+      activeCamera.height = viewport.height;
+      computedProjectionMatrix = activeCamera.projectionMatrix;
       renderTarget.setProjectionMatrix(computedProjectionMatrix);
       renderTarget.setViewMatrix(this.viewMatrix);
-      renderTarget.setFocal(fx, fy);
+      renderTarget.setFocal(activeCamera.fx, activeCamera.fy);
     }
 
     // 重新获取视图列表（投影矩阵已设置）

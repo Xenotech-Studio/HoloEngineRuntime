@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { getViewMatrix } from '../core/utils/webgl';
+import { Camera } from '../core/utils/Camera';
 
 /**
  * 自动插值相机控制 Hook
@@ -95,79 +96,56 @@ export function useAutoInterpCamera(
   }, []);
 
   const interpolateCamera = useCallback((fromCam, toCam, t) => {
+    // 确保 fromCam 和 toCam 是 Camera 实例
+    const from = fromCam instanceof Camera ? fromCam : Camera.fromPlainObject(fromCam);
+    const to = toCam instanceof Camera ? toCam : Camera.fromPlainObject(toCam);
+
     const pos = [
-      lerp(fromCam.position[0], toCam.position[0], t),
-      lerp(fromCam.position[1], toCam.position[1], t),
-      lerp(fromCam.position[2], toCam.position[2], t),
+      lerp(from.position[0], to.position[0], t),
+      lerp(from.position[1], to.position[1], t),
+      lerp(from.position[2], to.position[2], t),
     ];
 
-    // 如果两个相机都有 yawRad 和 pitchRad，使用 yaw/pitch 插值
-    if (fromCam.yawRad !== undefined && toCam.yawRad !== undefined &&
-        fromCam.pitchRad !== undefined && toCam.pitchRad !== undefined &&
-        fromCam.forwardHorizontalRef && toCam.forwardHorizontalRef &&
-        worldUpRef.current) {
-      // 只对 yaw 进行插值，pitch 保持不变（使用 fromCam 的 pitch，因为左右端点相机的 pitch 应该相同）
-      const interpolatedYaw = lerp(fromCam.yawRad, toCam.yawRad, t);
-      // 保持 pitch 不变（使用 fromCam 的 pitch，因为左右端点相机的 pitch 应该相同）
-      const pitch = fromCam.pitchRad;
-      // 使用 fromCam 的参考水平方向（左右端点相机应该使用相同的参考方向）
-      const forwardHorizontalRef = fromCam.forwardHorizontalRef;
-      
-      // 根据插值后的 yaw 和 pitch 构建旋转矩阵（确保 roll=0）
-      const rotation = buildRotationFromYawPitch(interpolatedYaw, pitch, worldUpRef.current, forwardHorizontalRef);
-      
-      return {
-        ...fromCam,
-        position: pos,
-        rotation: rotation,
-        yawRad: interpolatedYaw,
-        pitchRad: pitch,
-        forwardHorizontalRef: forwardHorizontalRef, // 保持参考方向
-        worldUp: fromCam.worldUp || worldUpRef.current, // 保持 world up
-        fx: lerp(fromCam.fx, toCam.fx, t),
-        fy: lerp(fromCam.fy, toCam.fy, t),
-      };
-    }
-
-    // 回退到原来的旋转矩阵插值方法
-    const rotA = fromCam.rotation.flat();
-    const rotB = toCam.rotation.flat();
-    const rot = rotA.map((v, i) => lerp(v, rotB[i], t));
+    // 使用 yaw/pitch 插值（Camera 类总是有这些属性）
+    const interpolatedYaw = lerp(from.yawRad, to.yawRad, t);
+    // 保持 pitch 不变（使用 from 的 pitch，因为左右端点相机的 pitch 应该相同）
+    const pitch = from.pitchRad;
+    // 使用 from 的参考水平方向（左右端点相机应该使用相同的参考方向）
+    const forwardHorizontalRef = from.forwardHorizontalRef;
+    const worldUp = from.worldUp || worldUpRef.current || [0, 1, 0];
     
-    // Orthonormalize
-    let a = rot.slice(0, 3);
-    let b = rot.slice(3, 6);
-    let c = rot.slice(6, 9);
-    const normalize = (v) => {
-      const len = Math.hypot(v[0], v[1], v[2]) || 1;
-      return [v[0] / len, v[1] / len, v[2] / len];
-    };
-    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-    const sub = (u, v) => [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
-    const cross = (a, b) => [
-      a[1] * b[2] - a[2] * b[1],
-      a[2] * b[0] - a[0] * b[2],
-      a[0] * b[1] - a[1] * b[0],
-    ];
-    a = normalize(a);
-    b = sub(b, [dot(a, b) * a[0], dot(a, b) * a[1], dot(a, b) * a[2]]);
-    b = normalize(b);
-    c = cross(a, b);
-
-    return {
-      ...fromCam,
+    // 创建新的 Camera 实例
+    return new Camera({
       position: pos,
-      rotation: [a, b, c],
-      fx: lerp(fromCam.fx, toCam.fx, t),
-      fy: lerp(fromCam.fy, toCam.fy, t),
-    };
-  }, [buildRotationFromYawPitch]);
+      yawRad: interpolatedYaw,
+      pitchRad: pitch,
+      forwardHorizontalRef: forwardHorizontalRef,
+      worldUp: worldUp,
+      fx: lerp(from.fx, to.fx, t),
+      fy: lerp(from.fy, to.fy, t),
+      width: from.width,
+      height: from.height,
+      targetVerticalFOV: from.targetVerticalFOV,
+      znear: from.znear,
+      zfar: from.zfar,
+      id: from.id,
+    });
+  }, []);
 
-  // 更新视图矩阵
-  const updateViewMatrix = useCallback((newViewMatrix) => {
-    viewMatrixRef.current = newViewMatrix;
-    if (onViewMatrixChange) {
-      onViewMatrixChange(newViewMatrix);
+  // 更新视图矩阵（从 Camera 实例同步）
+  const updateViewMatrix = useCallback((camera) => {
+    if (camera instanceof Camera) {
+      const newViewMatrix = camera.viewMatrix;
+      viewMatrixRef.current = newViewMatrix;
+      if (onViewMatrixChange) {
+        onViewMatrixChange(newViewMatrix);
+      }
+    } else if (Array.isArray(camera) && camera.length === 16) {
+      // 向后兼容：直接传入矩阵
+      viewMatrixRef.current = camera;
+      if (onViewMatrixChange) {
+        onViewMatrixChange(camera);
+      }
     }
   }, [viewMatrixRef, onViewMatrixChange]);
 
@@ -379,7 +357,7 @@ export function useAutoInterpCamera(
         // 在 leftCam 和 rightCam 之间插值
         const blended = interpolateCamera(leftCam, rightCam, t);
         cameraRef.current = blended;
-        updateViewMatrix(getViewMatrix(blended));
+        updateViewMatrix(blended);
         if (onCameraChange) {
           const currentIndex = t > 0.5 ? camerasRef.current.length - 1 : 0;
           onCameraChange(blended, currentIndex);
@@ -414,7 +392,7 @@ export function useAutoInterpCamera(
       if (leftCam && rightCam) {
         const blended = interpolateCamera(leftCam, rightCam, 0.5);
         cameraRef.current = blended;
-        updateViewMatrix(getViewMatrix(blended));
+        updateViewMatrix(blended);
       }
     }
   }, [enabled, camerasRef, interpolateCamera, updateViewMatrix, onCountdownProgressChange]);
