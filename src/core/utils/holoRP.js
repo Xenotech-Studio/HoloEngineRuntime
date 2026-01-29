@@ -1062,7 +1062,6 @@ export class HoloRP {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.depthMask(true);
-    gl.disable(gl.BLEND);
 
     if (uniforms.projection && projectionMatrix) {
       gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
@@ -1085,36 +1084,107 @@ export class HoloRP {
     gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(aPosition, 0);
 
+    // 分离半透明和不透明的点云对象，确保正确的渲染顺序
+    const opaqueObjects = [];
+    const transparentObjects = [];
     for (const obj of objects) {
       if (!obj.isReady()) continue;
-      const model = obj.getModelMatrix();
-      if (uniforms.model) {
-        gl.uniformMatrix4fv(uniforms.model, false, model);
+      const alpha = typeof obj.alpha === 'number' ? obj.alpha : 1.0;
+      if (alpha < 1.0) {
+        transparentObjects.push(obj);
+      } else {
+        opaqueObjects.push(obj);
       }
-      const ptSize = typeof obj.pointSize === 'number' ? obj.pointSize : 2.0;
-      if (uniforms.pointSize !== undefined && uniforms.pointSize !== null) {
-        gl.uniform1f(uniforms.pointSize, ptSize);
+    }
+
+    // 先渲染半透明对象（alpha < 1.0）
+    if (transparentObjects.length > 0) {
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(
+        gl.SRC_ALPHA,
+        gl.ONE_MINUS_SRC_ALPHA,
+        gl.ONE,
+        gl.ONE_MINUS_SRC_ALPHA
+      );
+      gl.depthMask(false); // 半透明对象不写入深度缓冲
+
+      for (const obj of transparentObjects) {
+        const model = obj.getModelMatrix();
+        if (uniforms.model) {
+          gl.uniformMatrix4fv(uniforms.model, false, model);
+        }
+        const ptSize = typeof obj.pointSize === 'number' ? obj.pointSize : 2.0;
+        if (uniforms.pointSize !== undefined && uniforms.pointSize !== null) {
+          gl.uniform1f(uniforms.pointSize, ptSize);
+        }
+
+        const alpha = typeof obj.alpha === 'number' ? obj.alpha : 1.0;
+        if (uniforms.alpha !== undefined && uniforms.alpha !== null) {
+          gl.uniform1f(uniforms.alpha, alpha);
+        }
+
+        gl.enableVertexAttribArray(aInstancePos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
+        gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(aInstancePos, 1);
+
+        gl.enableVertexAttribArray(aInstanceColor);
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointColorBuffer);
+        gl.vertexAttribPointer(aInstanceColor, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(aInstanceColor, 1);
+
+        gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.pointCount);
+
+        gl.vertexAttribDivisor(aInstancePos, 0);
+        gl.vertexAttribDivisor(aInstanceColor, 0);
+        gl.disableVertexAttribArray(aInstancePos);
+        gl.disableVertexAttribArray(aInstanceColor);
       }
+    }
 
-      gl.enableVertexAttribArray(aInstancePos);
-      gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
-      gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
-      gl.vertexAttribDivisor(aInstancePos, 1);
+    // 再渲染不透明对象（alpha >= 1.0）
+    if (opaqueObjects.length > 0) {
+      gl.disable(gl.BLEND);
+      gl.depthMask(true);
 
-      gl.enableVertexAttribArray(aInstanceColor);
-      gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointColorBuffer);
-      gl.vertexAttribPointer(aInstanceColor, 3, gl.FLOAT, false, 0, 0);
-      gl.vertexAttribDivisor(aInstanceColor, 1);
+      for (const obj of opaqueObjects) {
+        const model = obj.getModelMatrix();
+        if (uniforms.model) {
+          gl.uniformMatrix4fv(uniforms.model, false, model);
+        }
+        const ptSize = typeof obj.pointSize === 'number' ? obj.pointSize : 2.0;
+        if (uniforms.pointSize !== undefined && uniforms.pointSize !== null) {
+          gl.uniform1f(uniforms.pointSize, ptSize);
+        }
 
-      gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.pointCount);
+        const alpha = typeof obj.alpha === 'number' ? obj.alpha : 1.0;
+        if (uniforms.alpha !== undefined && uniforms.alpha !== null) {
+          gl.uniform1f(uniforms.alpha, alpha);
+        }
 
-      gl.vertexAttribDivisor(aInstancePos, 0);
-      gl.vertexAttribDivisor(aInstanceColor, 0);
-      gl.disableVertexAttribArray(aInstancePos);
-      gl.disableVertexAttribArray(aInstanceColor);
+        gl.enableVertexAttribArray(aInstancePos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
+        gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(aInstancePos, 1);
+
+        gl.enableVertexAttribArray(aInstanceColor);
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointColorBuffer);
+        gl.vertexAttribPointer(aInstanceColor, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(aInstanceColor, 1);
+
+        gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.pointCount);
+
+        gl.vertexAttribDivisor(aInstancePos, 0);
+        gl.vertexAttribDivisor(aInstanceColor, 0);
+        gl.disableVertexAttribArray(aInstancePos);
+        gl.disableVertexAttribArray(aInstanceColor);
+      }
     }
 
     gl.disableVertexAttribArray(aPosition);
+    // 恢复默认状态
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
   }
 
   /**

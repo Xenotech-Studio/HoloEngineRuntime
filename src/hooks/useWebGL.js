@@ -134,6 +134,7 @@ export function useWebGL(canvasRef, options = {}) {
         model: glContext.getUniformLocation(shaderProgramPointCloud, 'model'),
         viewport: glContext.getUniformLocation(shaderProgramPointCloud, 'viewport'),
         pointSize: glContext.getUniformLocation(shaderProgramPointCloud, 'pointSize'),
+        alpha: glContext.getUniformLocation(shaderProgramPointCloud, 'alpha'),
       };
       pointCloudAttributesRef.current = {
         position: glContext.getAttribLocation(shaderProgramPointCloud, 'position'),
