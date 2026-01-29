@@ -154,6 +154,7 @@ export function useWebGL(canvasRef, options = {}) {
         projection: glContext.getUniformLocation(shaderProgramLines, 'projection'),
         view: glContext.getUniformLocation(shaderProgramLines, 'view'),
         model: glContext.getUniformLocation(shaderProgramLines, 'model'),
+        alpha: glContext.getUniformLocation(shaderProgramLines, 'alpha'),
       };
       linesAttributesRef.current = {
         position: glContext.getAttribLocation(shaderProgramLines, 'position'),

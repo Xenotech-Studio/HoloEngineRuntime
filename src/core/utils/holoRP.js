@@ -996,7 +996,22 @@ export class HoloRP {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.depthMask(true);
-    gl.disable(gl.BLEND);
+    
+    // 检查是否需要启用混合（如果有 alpha < 1.0 的对象）
+    let needsBlend = false;
+    for (const obj of objects) {
+      if (obj.isReady() && obj.alpha !== undefined && obj.alpha < 1.0) {
+        needsBlend = true;
+        break;
+      }
+    }
+    
+    if (needsBlend) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else {
+      gl.disable(gl.BLEND);
+    }
 
     if (uniforms.projection && projectionMatrix) {
       gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
@@ -1010,6 +1025,12 @@ export class HoloRP {
       const model = obj.getModelMatrix();
       if (uniforms.model) {
         gl.uniformMatrix4fv(uniforms.model, false, model);
+      }
+      
+      // 设置 alpha uniform（如果对象有 alpha 属性，否则使用 1.0）
+      if (uniforms.alpha !== null && uniforms.alpha !== undefined) {
+        const alpha = obj.alpha !== undefined ? obj.alpha : 1.0;
+        gl.uniform1f(uniforms.alpha, alpha);
       }
 
       gl.enableVertexAttribArray(attrs.position);
