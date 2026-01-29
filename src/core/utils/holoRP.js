@@ -4,7 +4,7 @@
  */
 
 import { multiply4, identity4, createTransformMatrix } from './webgl';
-import { renderAxisGrid } from './axisGridRenderer';
+import { renderAxisGrid, renderGrid, renderAxes } from './axisGridRenderer';
 import { RenderTarget, CanvasRenderTarget } from './renderTarget';
 import { DepthVisualizationRenderer } from './depthVisualizationRenderer';
 import { Camera } from './Camera';
@@ -177,7 +177,9 @@ export class HoloRP {
     // 渲染状态
     this.viewMatrix = null;          // 当前视图矩阵
     this.camera = null;               // Camera 实例（用于投影矩阵，须含 targetVerticalFOV）
-    this.enableAxisGrid = true;      // 是否启用坐标轴和网格渲染（默认启用）
+    this.enableAxisGrid = true;      // 是否启用坐标轴和网格渲染（默认启用，向后兼容）
+    this.showGrid = true;             // 是否显示网格
+    this.showAxes = true;             // 是否显示坐标轴
     this.meshDebugMode = -1;         // Mesh 调试模式：-1=正常光照, 0=法线颜色（调试）
     this.showDepthVisualization = false; // 是否显示深度可视化
     this.depthRange = 30.0;          // 深度范围（米），用于映射，例如 30.0 表示关注 10-30 米范围
@@ -699,9 +701,24 @@ export class HoloRP {
       }
 
       // 绘制坐标轴和网格（如果启用）- 只在第一个视图绘制（避免重复）
-      if (this.enableAxisGrid && this.axisGridRenderer && viewMatrix && views.indexOf(viewInfo) === 0) {
+      if (this.axisGridRenderer && viewMatrix && views.indexOf(viewInfo) === 0) {
         try {
-          renderAxisGrid(gl, this.axisGridRenderer, projectionMatrix, viewMatrix);
+          // 分别控制 Grid 和 Axes 的显示
+          const shouldRenderGrid = this.enableAxisGrid && this.showGrid;
+          const shouldRenderAxes = this.enableAxisGrid && this.showAxes;
+          
+          if (shouldRenderGrid && shouldRenderAxes) {
+            // 两者都显示，使用便捷函数
+            renderAxisGrid(gl, this.axisGridRenderer, projectionMatrix, viewMatrix);
+          } else {
+            // 分别渲染
+            if (shouldRenderGrid) {
+              renderGrid(gl, this.axisGridRenderer, projectionMatrix, viewMatrix);
+            }
+            if (shouldRenderAxes) {
+              renderAxes(gl, this.axisGridRenderer, projectionMatrix, viewMatrix);
+            }
+          }
         } catch (err) {
           console.error('[HoloRP] 绘制坐标轴网格失败:', err);
         }
