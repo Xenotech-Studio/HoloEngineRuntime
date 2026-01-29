@@ -30,6 +30,9 @@ export { initAxisGridRenderer, renderAxisGrid, renderGrid, renderAxes } from './
 export * from './src/core/utils/webgl';
 export { Camera } from './src/core/utils/Camera';
 export { DepthVisualizationRenderer } from './src/core/utils/depthVisualizationRenderer';
+export { ShaderRegistry } from './src/core/utils/ShaderRegistry';
+export { Material } from './src/core/utils/Material';
+export { MaterialFactory } from './src/core/utils/MaterialFactory';
 
 // Hooks
 export { useWebGL } from './src/hooks/useWebGL';

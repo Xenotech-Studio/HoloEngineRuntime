@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createShader, createProgram } from '../core/utils/webgl';
+import { ShaderRegistry } from '../core/utils/ShaderRegistry';
+import { MaterialFactory } from '../core/utils/MaterialFactory';
 import { vertexShaderSource, fragmentShaderSource } from '../shaders';
 import { meshVertexShaderSource, meshFragmentShaderSource } from '../shaders/meshShaders';
 import { vertexShader3DGSSource, fragmentShader3DGSSource } from '../shaders/gaussian3dShaders';
@@ -27,6 +29,7 @@ export function useWebGL(canvasRef, options = {}) {
   const pointCloudAttributesRef = useRef({});
   const linesUniformsRef = useRef({});
   const linesAttributesRef = useRef({});
+  const shaderRegistryRef = useRef(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -45,6 +48,13 @@ export function useWebGL(canvasRef, options = {}) {
       if (!glContext) {
         throw new Error('WebGL2 not supported');
       }
+
+      // 创建 ShaderRegistry
+      const shaderRegistry = new ShaderRegistry(glContext);
+      shaderRegistryRef.current = shaderRegistry;
+      
+      // 初始化内置 shader
+      MaterialFactory.initializeBuiltinShaders(shaderRegistry);
 
       // 创建 shaders
       const vertexShader = createShader(glContext, glContext.VERTEX_SHADER, vertexShaderSource);
@@ -312,6 +322,10 @@ export function useWebGL(canvasRef, options = {}) {
         if (vertexBuffer) glContext.deleteBuffer(vertexBuffer);
         if (indexBuffer) glContext.deleteBuffer(indexBuffer);
         if (texture) glContext.deleteTexture(texture);
+        if (shaderRegistryRef.current) {
+          shaderRegistryRef.current.clear();
+          shaderRegistryRef.current = null;
+        }
       };
     } catch (err) {
       console.error('WebGL initialization error:', err);
@@ -336,6 +350,7 @@ export function useWebGL(canvasRef, options = {}) {
     pointCloudAttributes: pointCloudAttributesRef.current,
     linesUniforms: linesUniformsRef.current,
     linesAttributes: linesAttributesRef.current,
+    shaderRegistry: shaderRegistryRef.current,
     error
   };
 }

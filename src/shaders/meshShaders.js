@@ -91,11 +91,20 @@ void main() {
   }
   
   // 正面：正常渲染纹理或颜色
-  vec3 lightDir = normalize(-lightDirection);
-  float NdotL = max(dot(vNormal, lightDir), 0.0);
-  vec3 diffuse = baseColor * lightColor * NdotL * lightIntensity;
-  vec3 ambient = baseColor * ambientIntensity;
-  vec3 finalColor = ambient + diffuse;
+  // 如果使用纹理（如相机原图平面），使用 Unlit 模式直接输出纹理颜色
+  // 如果不使用纹理（纯色 mesh），则使用光照计算
+  vec3 finalColor;
+  if (useTexture) {
+    // Unlit 模式：直接使用纹理颜色，不进行光照计算
+    finalColor = baseColor;
+  } else {
+    // 有光照模式：计算漫反射和环境光
+    vec3 lightDir = normalize(-lightDirection);
+    float NdotL = max(dot(vNormal, lightDir), 0.0);
+    vec3 diffuse = baseColor * lightColor * NdotL * lightIntensity;
+    vec3 ambient = baseColor * ambientIntensity;
+    finalColor = ambient + diffuse;
+  }
   
   fragColor = vec4(finalColor, 1.0);
 }

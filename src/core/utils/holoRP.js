@@ -577,70 +577,97 @@ export class HoloRP {
       }
 
       // 先渲染所有 Mesh（使用深度测试）
-      if (meshObjects.length > 0 && this.meshProgram) {
-        gl.enable(gl.DEPTH_TEST);
-        gl.disable(gl.BLEND);
-        gl.useProgram(this.meshProgram);
+      if (meshObjects.length > 0) {
+        // 按 Material 分组（减少 program 切换）
+        const objectsByMaterial = new Map();
+        const objectsWithoutMaterial = [];
         
-        // 设置 mesh shader 的 uniform
-        if (this.meshUniforms.projection && projectionMatrix) {
-          gl.uniformMatrix4fv(this.meshUniforms.projection, false, projectionMatrix);
-        }
-        if (this.meshUniforms.view && viewMatrix) {
-          gl.uniformMatrix4fv(this.meshUniforms.view, false, viewMatrix);
-        }
-        
-        // 设置默认颜色（如果没有材质）
-        if (this.meshUniforms.color) {
-          gl.uniform3f(this.meshUniforms.color, 0.8, 0.8, 0.8);
-        }
-        if (this.meshUniforms.useTexture) {
-          gl.uniform1i(this.meshUniforms.useTexture, false);
-        }
-        
-        // 设置默认平行光（从右上方照射）
-        if (this.meshUniforms.lightDirection) {
-          // 平行光方向：从 (1, 1, 0) 方向照射（已归一化）
-          // 注意：lightDirection 是从光源指向表面的方向
-          const lightDir = [-1, 5, 1];
-          const len = Math.sqrt(lightDir[0] * lightDir[0] + lightDir[1] * lightDir[1] + lightDir[2] * lightDir[2]);
-          const normalizedDir = [lightDir[0] / len, lightDir[1] / len, lightDir[2] / len];
-          gl.uniform3f(
-            this.meshUniforms.lightDirection,
-            normalizedDir[0],
-            normalizedDir[1],
-            normalizedDir[2]
-          );
-        }
-        if (this.meshUniforms.lightColor) {
-          // 白色平行光
-          gl.uniform3f(this.meshUniforms.lightColor, 1.0, 1.0, 1.0);
-        }
-        if (this.meshUniforms.lightIntensity) {
-          // 平行光强度
-          gl.uniform1f(this.meshUniforms.lightIntensity, 0.6);
-        }
-        if (this.meshUniforms.ambientIntensity) {
-          // 环境光强度
-          gl.uniform1f(this.meshUniforms.ambientIntensity, 0.6);
-        }
-        
-        // 设置调试模式（-1=正常光照, 0=法线颜色）
-        if (this.meshUniforms.debugMode !== undefined && this.meshUniforms.debugMode !== null) {
-          gl.uniform1i(this.meshUniforms.debugMode, this.meshDebugMode !== undefined && this.meshDebugMode !== null ? this.meshDebugMode : -1);
-        }
-
         for (const obj of meshObjects) {
-          const tex = obj.diffuseTexture != null ? obj.diffuseTexture : this.defaultTexture;
-          if (this.meshUniforms.diffuseTexture != null) {
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.uniform1i(this.meshUniforms.diffuseTexture, 0);
+          if (obj.material) {
+            const mat = obj.material;
+            if (!objectsByMaterial.has(mat)) {
+              objectsByMaterial.set(mat, []);
+            }
+            objectsByMaterial.get(mat).push(obj);
+          } else {
+            // 向后兼容：没有 Material 的对象使用默认 program
+            objectsWithoutMaterial.push(obj);
           }
-          if (this.meshUniforms.useTexture != null) {
-            gl.uniform1i(this.meshUniforms.useTexture, obj.diffuseTexture != null ? 1 : 0);
+        }
+        
+        // 渲染有 Material 的对象（按 blendMode 排序：opaque -> transparent）
+        const materialGroups = Array.from(objectsByMaterial.entries());
+        materialGroups.sort((a, b) => {
+          const aBlend = a[0].blendMode === 'opaque' ? 0 : a[0].blendMode === 'transparent' ? 1 : 2;
+          const bBlend = b[0].blendMode === 'opaque' ? 0 : b[0].blendMode === 'transparent' ? 1 : 2;
+          return aBlend - bBlend;
+        });
+        
+        for (const [material, objects] of materialGroups) {
+          this._renderMeshWithMaterial(objects, material, viewMatrix, projectionMatrix);
+        }
+        
+        // 向后兼容：渲染没有 Material 的对象（使用默认 program）
+        if (objectsWithoutMaterial.length > 0 && this.meshProgram) {
+          gl.enable(gl.DEPTH_TEST);
+          gl.disable(gl.BLEND);
+          gl.useProgram(this.meshProgram);
+          
+          // 设置 mesh shader 的 uniform
+          if (this.meshUniforms.projection && projectionMatrix) {
+            gl.uniformMatrix4fv(this.meshUniforms.projection, false, projectionMatrix);
           }
-          this._renderMesh(obj, viewMatrix, projectionMatrix);
+          if (this.meshUniforms.view && viewMatrix) {
+            gl.uniformMatrix4fv(this.meshUniforms.view, false, viewMatrix);
+          }
+          
+          // 设置默认颜色（如果没有材质）
+          if (this.meshUniforms.color) {
+            gl.uniform3f(this.meshUniforms.color, 0.8, 0.8, 0.8);
+          }
+          if (this.meshUniforms.useTexture) {
+            gl.uniform1i(this.meshUniforms.useTexture, false);
+          }
+          
+          // 设置默认平行光（从右上方照射）
+          if (this.meshUniforms.lightDirection) {
+            const lightDir = [-1, 5, 1];
+            const len = Math.sqrt(lightDir[0] * lightDir[0] + lightDir[1] * lightDir[1] + lightDir[2] * lightDir[2]);
+            const normalizedDir = [lightDir[0] / len, lightDir[1] / len, lightDir[2] / len];
+            gl.uniform3f(
+              this.meshUniforms.lightDirection,
+              normalizedDir[0],
+              normalizedDir[1],
+              normalizedDir[2]
+            );
+          }
+          if (this.meshUniforms.lightColor) {
+            gl.uniform3f(this.meshUniforms.lightColor, 1.0, 1.0, 1.0);
+          }
+          if (this.meshUniforms.lightIntensity) {
+            gl.uniform1f(this.meshUniforms.lightIntensity, 0.6);
+          }
+          if (this.meshUniforms.ambientIntensity) {
+            gl.uniform1f(this.meshUniforms.ambientIntensity, 0.6);
+          }
+          
+          // 设置调试模式（-1=正常光照, 0=法线颜色）
+          if (this.meshUniforms.debugMode !== undefined && this.meshUniforms.debugMode !== null) {
+            gl.uniform1i(this.meshUniforms.debugMode, this.meshDebugMode !== undefined && this.meshDebugMode !== null ? this.meshDebugMode : -1);
+          }
+
+          for (const obj of objectsWithoutMaterial) {
+            const tex = obj.diffuseTexture != null ? obj.diffuseTexture : this.defaultTexture;
+            if (this.meshUniforms.diffuseTexture != null) {
+              gl.activeTexture(gl.TEXTURE0);
+              gl.bindTexture(gl.TEXTURE_2D, tex);
+              gl.uniform1i(this.meshUniforms.diffuseTexture, 0);
+            }
+            if (this.meshUniforms.useTexture != null) {
+              gl.uniform1i(this.meshUniforms.useTexture, obj.diffuseTexture != null ? 1 : 0);
+            }
+            this._renderMesh(obj, viewMatrix, projectionMatrix);
+          }
         }
       }
 
@@ -898,7 +925,189 @@ export class HoloRP {
   }
 
   /**
-   * 渲染 Mesh 对象
+   * 使用 Material 渲染 Mesh 对象组
+   * @private
+   */
+  _renderMeshWithMaterial(objects, material, viewMatrix, projectionMatrix) {
+    const gl = this.gl;
+    
+    if (!material || !material.program || objects.length === 0) {
+      return;
+    }
+    
+    // 设置渲染状态
+    if (material.depthTest) {
+      gl.enable(gl.DEPTH_TEST);
+    } else {
+      gl.disable(gl.DEPTH_TEST);
+    }
+    
+    if (material.depthWrite) {
+      gl.depthMask(true);
+    } else {
+      gl.depthMask(false);
+    }
+    
+    // 设置剔除模式
+    if (material.cullMode === 'none') {
+      gl.disable(gl.CULL_FACE);
+    } else {
+      gl.enable(gl.CULL_FACE);
+      if (material.cullMode === 'front') {
+        gl.cullFace(gl.FRONT);
+      } else {
+        gl.cullFace(gl.BACK);
+      }
+    }
+    
+    // 设置混合模式
+    if (material.blendMode === 'opaque') {
+      gl.disable(gl.BLEND);
+    } else if (material.blendMode === 'transparent') {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else if (material.blendMode === 'additive') {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    }
+    
+    // 使用 Material 的 program
+    gl.useProgram(material.program);
+    
+    // 设置通用 uniform
+    if (material.uniforms.projection && projectionMatrix) {
+      gl.uniformMatrix4fv(material.uniforms.projection, false, projectionMatrix);
+    }
+    if (material.uniforms.view && viewMatrix) {
+      gl.uniformMatrix4fv(material.uniforms.view, false, viewMatrix);
+    }
+    
+    // 设置默认颜色
+    if (material.uniforms.color) {
+      gl.uniform3f(material.uniforms.color, 0.8, 0.8, 0.8);
+    }
+    
+    // 设置光照 uniform（如果存在）
+    if (material.uniforms.lightDirection) {
+      const lightDir = [-1, 5, 1];
+      const len = Math.sqrt(lightDir[0] * lightDir[0] + lightDir[1] * lightDir[1] + lightDir[2] * lightDir[2]);
+      const normalizedDir = [lightDir[0] / len, lightDir[1] / len, lightDir[2] / len];
+      gl.uniform3f(material.uniforms.lightDirection, normalizedDir[0], normalizedDir[1], normalizedDir[2]);
+    }
+    if (material.uniforms.lightColor) {
+      gl.uniform3f(material.uniforms.lightColor, 1.0, 1.0, 1.0);
+    }
+    if (material.uniforms.lightIntensity) {
+      gl.uniform1f(material.uniforms.lightIntensity, 0.6);
+    }
+    if (material.uniforms.ambientIntensity) {
+      gl.uniform1f(material.uniforms.ambientIntensity, 0.6);
+    }
+    
+    // 设置调试模式
+    if (material.uniforms.debugMode !== undefined && material.uniforms.debugMode !== null) {
+      gl.uniform1i(material.uniforms.debugMode, this.meshDebugMode !== undefined && this.meshDebugMode !== null ? this.meshDebugMode : -1);
+    }
+    
+    // 设置 alpha（用于 transparent 和 unlit）
+    if (material.uniforms.alpha !== undefined && material.uniforms.alpha !== null) {
+      gl.uniform1f(material.uniforms.alpha, material.alpha);
+    }
+    
+    // 设置背面相关 uniform
+    if (material.uniforms.showBackFace !== undefined && material.uniforms.showBackFace !== null) {
+      gl.uniform1i(material.uniforms.showBackFace, false);
+    }
+    
+    // 渲染所有使用此 Material 的对象
+    for (const obj of objects) {
+      if (!obj.isReady()) continue;
+      
+      const modelMatrix = obj.getModelMatrix();
+      
+      // 设置 model matrix
+      if (material.uniforms.model) {
+        gl.uniformMatrix4fv(material.uniforms.model, false, modelMatrix);
+      }
+      
+      // 设置纹理
+      const tex = obj.diffuseTexture != null ? obj.diffuseTexture : this.defaultTexture;
+      if (material.uniforms.diffuseTexture != null) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.uniform1i(material.uniforms.diffuseTexture, 0);
+      }
+      if (material.uniforms.useTexture != null) {
+        gl.uniform1i(material.uniforms.useTexture, obj.diffuseTexture != null ? 1 : 0);
+      }
+      
+      // 绑定顶点缓冲区
+      const attrs = obj.vertexAttributes || {};
+      const useSeparateBuffers = attrs.positionBuffer && attrs.normalBuffer && attrs.uvBuffer;
+      
+      if (useSeparateBuffers) {
+        // 使用分离的缓冲区
+        if (material.attributes?.position !== undefined && material.attributes.position >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, attrs.positionBuffer);
+          gl.enableVertexAttribArray(material.attributes.position);
+          gl.vertexAttribPointer(material.attributes.position, 3, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribDivisor(material.attributes.position, 0);
+        }
+        
+        if (material.attributes?.normal !== undefined && material.attributes.normal >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, attrs.normalBuffer);
+          gl.enableVertexAttribArray(material.attributes.normal);
+          gl.vertexAttribPointer(material.attributes.normal, 3, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribDivisor(material.attributes.normal, 0);
+        }
+        
+        if (material.attributes?.uv !== undefined && material.attributes.uv >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, attrs.uvBuffer);
+          gl.enableVertexAttribArray(material.attributes.uv);
+          gl.vertexAttribPointer(material.attributes.uv, 2, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribDivisor(material.attributes.uv, 0);
+        }
+      } else if (obj.vertexBuffer) {
+        // 使用交错的缓冲区
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.vertexBuffer);
+        const stride = (attrs.stride !== undefined && attrs.stride !== null) ? Number(attrs.stride) : 32;
+        
+        if (material.attributes?.position !== undefined && material.attributes.position >= 0) {
+          const posOffset = (attrs.position !== undefined && attrs.position !== null) ? Number(attrs.position) : 0;
+          gl.enableVertexAttribArray(material.attributes.position);
+          gl.vertexAttribPointer(material.attributes.position, 3, gl.FLOAT, false, stride, posOffset);
+          gl.vertexAttribDivisor(material.attributes.position, 0);
+        }
+        
+        if (material.attributes?.normal !== undefined && material.attributes.normal >= 0) {
+          const normalOffset = (attrs.normal !== undefined && attrs.normal !== null) ? Number(attrs.normal) : 12;
+          gl.enableVertexAttribArray(material.attributes.normal);
+          gl.vertexAttribPointer(material.attributes.normal, 3, gl.FLOAT, false, stride, normalOffset);
+          gl.vertexAttribDivisor(material.attributes.normal, 0);
+        }
+        
+        if (material.attributes?.uv !== undefined && material.attributes.uv >= 0) {
+          const uvOffset = (attrs.uv !== undefined && attrs.uv !== null) ? Number(attrs.uv) : 24;
+          gl.enableVertexAttribArray(material.attributes.uv);
+          gl.vertexAttribPointer(material.attributes.uv, 2, gl.FLOAT, false, stride, uvOffset);
+          gl.vertexAttribDivisor(material.attributes.uv, 0);
+        }
+      }
+      
+      // 绑定索引缓冲区
+      if (obj.elementBuffer) {
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, obj.elementBuffer);
+      }
+      
+      // 绘制
+      if (obj.elementBuffer && obj.elementCount > 0) {
+        gl.drawElements(gl.TRIANGLES, obj.elementCount, gl.UNSIGNED_SHORT, 0);
+      }
+    }
+  }
+
+  /**
+   * 渲染 Mesh 对象（向后兼容，使用默认 program）
    * @private
    */
   _renderMesh(obj, viewMatrix, projectionMatrix) {
