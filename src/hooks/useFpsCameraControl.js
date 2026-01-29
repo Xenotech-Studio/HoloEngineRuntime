@@ -91,6 +91,98 @@ export function useFpsCameraControl(
     updateViewMatrix(camera);
   }, [cameraRef, updateViewMatrix]);
 
+  // 聚焦到目标位置（FPS 模式：移动相机位置并朝向目标）
+  const focusOnTarget = useCallback((target) => {
+    if (!cameraRef.current || !Array.isArray(target) || target.length !== 3) {
+      return;
+    }
+
+    if (!(cameraRef.current instanceof Camera)) {
+      try {
+        cameraRef.current = Camera.fromPlainObject(cameraRef.current);
+      } catch (error) {
+        console.error('[useFpsCameraControl] Failed to convert camera to Camera instance:', error);
+        return;
+      }
+    }
+
+    const camera = cameraRef.current;
+    const cameraPos = camera.position;
+    
+    // 确保 worldUp 已初始化
+    if (!worldUpRef.current) {
+      worldUpRef.current = camera.worldUp;
+    }
+    const worldUp = worldUpRef.current;
+
+    // 计算从相机到目标的方向向量
+    const toTarget = [
+      target[0] - cameraPos[0],
+      target[1] - cameraPos[1],
+      target[2] - cameraPos[2],
+    ];
+    const distance = Math.hypot(toTarget[0], toTarget[1], toTarget[2]);
+    
+    if (distance < 1e-6) {
+      // 目标与相机位置相同，不移动
+      return;
+    }
+
+    // 归一化方向向量
+    const normalize = (v) => {
+      const len = Math.hypot(v[0], v[1], v[2]);
+      return len > 1e-6 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 1, 0];
+    };
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+
+    const forwardDir = normalize(toTarget);
+
+    // 计算水平方向（去除垂直分量）
+    const worldUpComponent = dot(forwardDir, worldUp);
+    const horizontalDir = normalize([
+      forwardDir[0] - worldUp[0] * worldUpComponent,
+      forwardDir[1] - worldUp[1] * worldUpComponent,
+      forwardDir[2] - worldUp[2] * worldUpComponent,
+    ]);
+
+    // 计算 pitch（垂直角度）：相对于水平面的角度
+    // pitch = asin(forwardDir 在 worldUp 方向上的分量)
+    const pitchRad = Math.asin(Math.max(-1, Math.min(1, worldUpComponent)));
+    const clampedPitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitchRad));
+
+    // 计算 yaw（水平角度）
+    // 使用 forwardHorizontalRef 作为参考方向
+    const forwardHorizontalRef = camera.forwardHorizontalRef;
+    const refRight = normalize(cross(worldUp, forwardHorizontalRef));
+    const refForward = normalize(cross(refRight, worldUp));
+    
+    // 计算 horizontalDir 相对于 refForward 的角度
+    const cosYaw = dot(horizontalDir, refForward);
+    const sinYaw = dot(horizontalDir, refRight);
+    let yawRad = Math.atan2(sinYaw, cosYaw);
+
+    // 将相机移动到目标位置附近（保持一定距离，比如 2 个单位）
+    const focusDistance = Math.max(2.0, Math.min(distance, 5.0));
+    const newPosition = [
+      target[0] - forwardDir[0] * focusDistance,
+      target[1] - forwardDir[1] * focusDistance,
+      target[2] - forwardDir[2] * focusDistance,
+    ];
+
+    // 更新相机位置和朝向
+    camera.position = newPosition;
+    camera.yawRad = yawRad;
+    camera.pitchRad = clampedPitch;
+
+    // 同步更新 viewMatrixRef
+    updateViewMatrix(camera);
+  }, [cameraRef, updateViewMatrix]);
+
 
   // 根据 yaw 和 pitch 构建旋转矩阵（确保 roll=0）
   const buildRotationFromYawPitch = (yawRad, pitchRad, worldUp, forwardHorizontalRef) => {
@@ -844,6 +936,7 @@ export function useFpsCameraControl(
 
   return {
     updateCameraFromInput,
+    focusOnTarget,
     activeKeys: activeKeysRef.current,
     carousel: carouselRef.current,
   };
