@@ -14,7 +14,9 @@
 
 ### React 集成
 - **WebGL 管理** - `useWebGL` Hook，管理 WebGL2 上下文和 shader programs
-- **相机控制** - `useCameraControls` Hook，支持鼠标、键盘、触摸控制
+- **相机控制** - `useFpsCameraControl` 和 `useOrbitCameraControl` Hooks，支持两种相机控制模式
+  - **FPS 模式**：第一人称视角，适合自由探索场景
+  - **Orbit 模式**：轨道相机，相机围绕目标点旋转，适合查看固定对象
 - **自动插值相机** - `useAutoInterpCamera` Hook，相机自动插值运动
 - **平移视图** - `usePanView` Hook，视口平移功能
 - **React 组件** - `HoloEngineRuntime` 组件，完整的 React 集成示例
@@ -27,31 +29,84 @@
 
 ### 基础使用
 
+#### 选择相机控制模式
+
+HoloEngineRuntime 提供两种相机控制模式，根据使用场景选择：
+
+- **`useFpsCameraControl`** - FPS（第一人称）模式
+  - 适合：自由探索场景、游戏式导航
+  - 特点：相机位置可以自由移动，鼠标拖拽旋转视角，WASD 移动相机位置
+  
+- **`useOrbitCameraControl`** - Orbit（轨道）模式
+  - 适合：查看固定对象、模型查看器
+  - 特点：相机围绕目标点旋转，鼠标拖拽旋转视角，滚轮缩放距离
+
+#### 示例代码
+
 ```js
-import { useWebGL, useCameraControls, screenToRay, HoloEngineRuntime } from '@holoengineruntime';
+import { 
+  useWebGL, 
+  useFpsCameraControl,  // 或 useOrbitCameraControl
+  screenToRay, 
+  HoloEngineRuntime 
+} from '@holoengineruntime';
 
 function MyViewer() {
   const canvasRef = useRef(null);
   const viewMatrixRef = useRef(null);
   const cameraRef = useRef(null);
+  const camerasRef = useRef([]);
   
   // WebGL 初始化
   const { gl, program, uniforms, attributes } = useWebGL(canvasRef);
   
-  // 相机控制
-  const { updateCameraFromInput } = useCameraControls(
+  // 相机控制 - FPS 模式示例
+  const fpsControls = useFpsCameraControl(
     canvasRef,
     viewMatrixRef,
     cameraRef,
     camerasRef,
-    onViewMatrixChange,
-    onCameraChange
+    (viewMatrix) => { /* onViewMatrixChange */ },
+    (camera, index) => { /* onCameraChange */ },
+    0, // camerasVersion
+    0, // worldUpPitchAdjust
+    null, // onNotifyUserInput
+    false, // disableLeftMouseButton
+    0.5, // cameraSpeedMultiplier
+    true // enabled
   );
+  
+  // 或者使用 Orbit 模式
+  // const orbitControls = useOrbitCameraControl(
+  //   canvasRef,
+  //   viewMatrixRef,
+  //   cameraRef,
+  //   camerasRef,
+  //   (viewMatrix) => { /* onViewMatrixChange */ },
+  //   (camera, index) => { /* onCameraChange */ },
+  //   0, // camerasVersion
+  //   0, // worldUpPitchAdjust
+  //   null, // onNotifyUserInput
+  //   false, // disableLeftMouseButton
+  //   0.5, // cameraSpeedMultiplier
+  //   15, // initialOrbitRadius
+  //   0.6, // minOrbitRadius
+  //   true // enabled
+  // );
+  
+  // 在渲染循环中更新相机
+  useEffect(() => {
+    const loop = () => {
+      fpsControls.updateCameraFromInput(0.016); // deltaTime
+      requestAnimationFrame(loop);
+    };
+    loop();
+  }, [fpsControls]);
   
   // Raycasting
   const ray = screenToRay(
     mouseX, mouseY,
-    viewMatrix,
+    viewMatrixRef.current,
     projectionMatrix,
     canvasWidth,
     canvasHeight
@@ -109,25 +164,110 @@ function MyViewer() {
 - `meshAttributes` - Mesh attributes
 - `error` - 错误信息（如果有）
 
-#### `useCameraControls(...)`
+#### `useFpsCameraControl(...)`
 
-交互式相机控制 Hook。
+FPS（第一人称）风格相机控制 Hook。
 
 **参数：**
 - `canvasRef` - Canvas 元素的 ref
-- `viewMatrixRef` - 视图矩阵的 ref
-- `cameraRef` - 相机对象的 ref
-- `camerasRef` - 相机数组的 ref
-- `onViewMatrixChange` - 视图矩阵变化回调
-- `onCameraChange` - 相机变化回调
-- `camerasVersion` - 相机版本号（用于触发更新）
-- `worldUpPitchAdjust` - world_up 在 pitch 方向上的调整角度（度数）
-- `onNotifyUserInput` - 用户输入通知回调
-- `disableLeftMouseButton` - 是否禁用左键转视野
-- `cameraSpeedMultiplier` - 相机移动速度倍率
+- `viewMatrixRef` - 视图矩阵的 ref（4x4 矩阵，camera-to-world）
+- `cameraRef` - 相机对象的 ref（Camera 实例）
+- `camerasRef` - 相机数组的 ref（可选，用于相机切换）
+- `onViewMatrixChange` - 视图矩阵变化回调 `(viewMatrix) => void`
+- `onCameraChange` - 相机变化回调 `(camera, index) => void`
+- `camerasVersion` - 相机版本号（用于触发更新，默认 0）
+- `worldUpPitchAdjust` - world_up 在 pitch 方向上的调整角度（度数，默认 0）
+- `onNotifyUserInput` - 用户输入通知回调（用于中断自动插值，默认 null）
+- `disableLeftMouseButton` - 是否禁用左键转视野（默认 false）
+- `cameraSpeedMultiplier` - 相机移动速度倍率（默认 0.5）
+- `enabled` - 是否启用此控制模式（默认 true）
 
 **返回：**
-- `updateCameraFromInput` - 更新相机输入的函数（需要在渲染循环中调用）
+- `updateCameraFromInput(deltaTime)` - 更新相机输入的函数（需要在渲染循环中调用）
+- `focusOnTarget(target)` - 聚焦到目标位置的函数
+- `activeKeys` - 当前按下的按键数组（只读）
+- `carousel` - 是否处于轮播模式（只读）
+- **`hasDragged`** - **拖拽状态 ref**，用于检测用户是否已经发生了拖拽
+  - 访问方式：`controls.hasDragged.current`（`true` 表示已经发生了拖拽）
+- **`getMouseDownPos()`** - **获取鼠标按下位置**的函数
+  - 返回：`{x, y}` 或 `null`（用于检测拖拽距离）
+
+#### `useOrbitCameraControl(...)`
+
+Orbit（轨道）风格相机控制 Hook。
+
+**参数：**
+- `canvasRef` - Canvas 元素的 ref
+- `viewMatrixRef` - 视图矩阵的 ref（4x4 矩阵，camera-to-world）
+- `cameraRef` - 相机对象的 ref（Camera 实例）
+- `camerasRef` - 相机数组的 ref（可选，用于相机切换）
+- `onViewMatrixChange` - 视图矩阵变化回调 `(viewMatrix) => void`
+- `onCameraChange` - 相机变化回调 `(camera, index) => void`
+- `camerasVersion` - 相机版本号（用于触发更新，默认 0）
+- `worldUpPitchAdjust` - world_up 在 pitch 方向上的调整角度（度数，默认 0）
+- `onNotifyUserInput` - 用户输入通知回调（用于中断自动插值，默认 null）
+- `disableLeftMouseButton` - 是否禁用左键转视野（默认 false）
+- `cameraSpeedMultiplier` - 相机移动速度倍率（默认 0.5）
+- `initialOrbitRadius` - 初始轨道半径（默认 15）
+- `minOrbitRadius` - 最小轨道半径（默认 0.6）
+- `enabled` - 是否启用此控制模式（默认 true）
+
+**返回：**
+- `updateCameraFromInput(deltaTime)` - 更新相机输入的函数（需要在渲染循环中调用）
+- `focusOnTarget(target)` - 聚焦到目标位置的函数
+- `activeKeys` - 当前按下的按键数组（只读）
+- `carousel` - 始终为 `false`（Orbit 模式不支持轮播）
+- **`hasDragged`** - **拖拽状态 ref**，用于检测用户是否已经发生了拖拽
+  - 访问方式：`controls.hasDragged.current`（`true` 表示已经发生了拖拽）
+- **`getMouseDownPos()`** - **获取鼠标按下位置**的函数
+  - 返回：`{x, y}` 或 `null`（用于检测拖拽距离）
+
+### 拖拽检测 API
+
+相机控制 Hook 提供了拖拽检测 API，允许应用区分"点击"和"拖拽"操作。这对于实现交互逻辑非常重要（例如：拖拽时旋转视角，点击时选择对象）。
+
+#### 工作原理
+
+- **拖拽**：用户按下鼠标并移动超过 5 像素 → `hasDragged.current` 为 `true`
+- **点击**：用户按下鼠标但未移动或移动距离很小 → `hasDragged.current` 为 `false`
+
+#### 使用示例
+
+```js
+const controls = useFpsCameraControl(/* ... */);
+
+// 在点击事件处理中检测拖拽
+const handleClick = (e) => {
+  // 方法 1：使用 hasDragged ref（推荐）
+  if (controls.hasDragged.current) {
+    // 已经发生了拖拽，不处理点击（避免误触发选择等操作）
+    return;
+  }
+  
+  // 方法 2：使用鼠标按下位置检测拖拽距离（后备方案）
+  const mouseDownPos = controls.getMouseDownPos();
+  if (mouseDownPos) {
+    const dx = Math.abs(e.clientX - mouseDownPos.x);
+    const dy = Math.abs(e.clientY - mouseDownPos.y);
+    const DRAG_THRESHOLD = 5; // 像素
+    if (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD) {
+      // 发生了拖拽，不处理点击
+      return;
+    }
+  }
+  
+  // 处理点击事件（选择对象、打开菜单等）
+  selectObject(e.clientX, e.clientY);
+};
+```
+
+#### 注意事项
+
+1. **Ref 访问**：`hasDragged` 是一个 ref，需要通过 `.current` 访问
+2. **延迟清除**：拖拽状态会在鼠标释放后延迟清除（使用 `setTimeout`），以确保在 `click` 事件触发时仍能正确检测到拖拽状态
+3. **适用场景**：
+   - 拖拽时忽略点击事件（避免误触发选择、取消选择等操作）
+   - 点击时执行特定操作（如选择对象、打开菜单等）
 
 ### Core API（原 holo-rp-core）
 
@@ -313,7 +453,8 @@ HoloEngineRuntime/
 │   │   └── gaussian3dShaders.js
 │   ├── hooks/                    # React Hooks
 │   │   ├── useWebGL.js          # WebGL 上下文管理
-│   │   ├── useCameraControls.js # 相机控制
+│   │   ├── useFpsCameraControl.js # FPS 相机控制
+│   │   ├── useOrbitCameraControl.js # Orbit 相机控制
 │   │   ├── useAutoInterpCamera.js # 自动插值相机
 │   │   └── usePanView.js        # 平移视图
 │   ├── components/               # React 组件
@@ -348,7 +489,7 @@ HoloEngineRuntime/
 
 1. **Shader 路径**：`useWebGL` 从包内 `../shaders` 导入（`src/shaders/`），与 Holotech 同源，无需额外配置。
 
-2. **Gizmo 状态**：`useCameraControls` 使用 `globalGizmoDragging` 来防止在 Gizmo 拖拽时更新相机。
+2. **Gizmo 状态**：`useFpsCameraControl` 和 `useOrbitCameraControl` 使用 `globalGizmoDragging` 来防止在 Gizmo 拖拽时更新相机。
 
 3. **渲染循环**：需要在 `requestAnimationFrame` 中调用 `updateCameraFromInput`。
 
@@ -411,7 +552,8 @@ Shaders（4DGS、mesh、3DGS）已内置在 `src/shaders/`，`useWebGL` 从 `../
 import { 
   HoloRP, 
   useWebGL, 
-  useCameraControls, 
+  useFpsCameraControl,
+  useOrbitCameraControl, 
   screenToRay,
 } from '@holoengineruntime';
 

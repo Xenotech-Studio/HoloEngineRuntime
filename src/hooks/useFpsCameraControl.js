@@ -31,6 +31,11 @@ export function useFpsCameraControl(
   const worldUpRef = useRef(null); // 世界的"上"方向（从初始相机的 UP 方向提取）
   const cameraSpeedMultiplierRef = useRef(cameraSpeedMultiplier); // 使用 ref 存储最新的速度倍率
   
+  // 拖拽检测相关 refs（暴露给外部使用）
+  const hasDraggedRef = useRef(false); // 是否已经发生了拖拽
+  const mouseDownPosRef = useRef(null); // 鼠标按下的位置（用于检测拖拽）
+  const DRAG_THRESHOLD = 5; // 拖拽阈值（像素）
+  
   // 同步更新 ref 值（在每次渲染时立即更新，不等待 useEffect）
   cameraSpeedMultiplierRef.current = cameraSpeedMultiplier;
 
@@ -479,6 +484,9 @@ export function useFpsCameraControl(
       e.stopPropagation();
       mouseStartRef.current = { x: e.clientX, y: e.clientY };
       mouseDownRef.current = true;
+      // 记录鼠标按下位置（用于拖拽检测）
+      mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+      hasDraggedRef.current = false;
     };
 
     const handleContextMenu = (e) => {
@@ -506,6 +514,15 @@ export function useFpsCameraControl(
       const { innerWidth, innerHeight } = window;
       const dx = e.clientX - mouseStartRef.current.x;
       const dy = e.clientY - mouseStartRef.current.y;
+      
+      // 检测是否发生拖拽（基于鼠标按下位置）
+      if (mouseDownPosRef.current) {
+        const dragDx = Math.abs(e.clientX - mouseDownPosRef.current.x);
+        const dragDy = Math.abs(e.clientY - mouseDownPosRef.current.y);
+        if (dragDx > DRAG_THRESHOLD || dragDy > DRAG_THRESHOLD) {
+          hasDraggedRef.current = true;
+        }
+      }
 
       if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
         notifyUserInput();
@@ -566,6 +583,11 @@ export function useFpsCameraControl(
       if (e.button === 0 || e.button === 2) {
         mouseDownRef.current = false;
         mouseStartRef.current = { x: 0, y: 0 };
+        // 延迟清除拖拽状态，以便在 click 事件中能够检测到
+        setTimeout(() => {
+          hasDraggedRef.current = false;
+          mouseDownPosRef.current = null;
+        }, 0);
         e.preventDefault();
         e.stopPropagation();
       }
@@ -939,5 +961,8 @@ export function useFpsCameraControl(
     focusOnTarget,
     activeKeys: activeKeysRef.current,
     carousel: carouselRef.current,
+    // 拖拽检测 API
+    hasDragged: hasDraggedRef, // ref，外部可以通过 .current 访问，表示是否已经发生了拖拽
+    getMouseDownPos: () => mouseDownPosRef.current, // 获取鼠标按下位置
   };
 }
