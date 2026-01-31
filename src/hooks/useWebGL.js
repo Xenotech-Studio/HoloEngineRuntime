@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createShader, createProgram } from '../core/utils/webgl';
 import { ShaderRegistry } from '../core/utils/ShaderRegistry';
 import { MaterialFactory } from '../core/utils/MaterialFactory';
-import { vertexShaderSource, fragmentShaderSource } from '../shaders';
+import { vertexShaderSource, fragmentShaderSource } from '../shaders/splatShaders';
 import { meshVertexShaderSource, meshFragmentShaderSource } from '../shaders/meshShaders';
 import { vertexShader3DGSSource, fragmentShader3DGSSource } from '../shaders/gaussian3dShaders';
 import { pointCloudVertexShaderSource, pointCloudFragmentShaderSource } from '../shaders/pointCloudShaders';
