@@ -56,3 +56,6 @@ export { loadAndSetupMeshObject, parseOBJ, loadOBJFile, createMeshBuffers } from
 export { createPointCloudBuffers, createPointCloudObject } from './src/utils/pointCloudLoader';
 export { createLinesObject, updateLinesObject } from './src/utils/linesLoader';
 export { SceneManager, SplatObject } from './src/utils/sceneManager';
+
+// Shaders（供 XR / 自定义渲染使用，splat 4DGS）
+export { vertexShaderSource, fragmentShaderSource } from './src/shaders/splatShaders';
