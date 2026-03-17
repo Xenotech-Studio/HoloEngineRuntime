@@ -761,6 +761,8 @@ export function useOrbitCameraControl(
 
     const speedMultiplier = cameraSpeedMultiplierRef.current;
     const moveSpeed = speedMultiplier * deltaTime * 60;
+    const verticalSpeedMultiplier = 0.5; // 上下移动（空格/Alt）相对水平 WASD 的倍率
+    const verticalMoveSpeed = moveSpeed * verticalSpeedMultiplier;
 
     let moved = false;
     const beforePos = camera.position;
@@ -817,17 +819,17 @@ export function useOrbitCameraControl(
       moved = true;
     }
 
-    // 空格：上升
+    // 空格：上升（使用 verticalMoveSpeed）
     if (hasSpace) {
       const worldUp = worldUpRef.current || camera.worldUp;
-      camera.moveWorld(-worldUp[0] * moveSpeed, -worldUp[1] * moveSpeed, -worldUp[2] * moveSpeed);
+      camera.moveWorld(-worldUp[0] * verticalMoveSpeed, -worldUp[1] * verticalMoveSpeed, -worldUp[2] * verticalMoveSpeed);
       moved = true;
     }
 
-    // Shift / Alt：下降
+    // Shift / Alt：下降（使用 verticalMoveSpeed）
     if (hasShiftAlt) {
       const worldUp = worldUpRef.current || camera.worldUp;
-      camera.moveWorld(worldUp[0] * moveSpeed, worldUp[1] * moveSpeed, worldUp[2] * moveSpeed);
+      camera.moveWorld(worldUp[0] * verticalMoveSpeed, worldUp[1] * verticalMoveSpeed, worldUp[2] * verticalMoveSpeed);
       moved = true;
     }
 

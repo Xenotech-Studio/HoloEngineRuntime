@@ -1219,6 +1219,9 @@ export class HoloRP {
     if (!prog || !uniforms || !attrs) return;
 
     gl.useProgram(prog);
+    // 禁用所有 vertex attribute，避免上一 pass（如 Mesh 的 position/normal/uv）遗留的 enabled 导致 drawArrays 报错
+    const maxAttribs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 16;
+    for (let i = 0; i < maxAttribs; i++) gl.disableVertexAttribArray(i);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.depthMask(true);
@@ -1248,12 +1251,22 @@ export class HoloRP {
 
     for (const obj of objects) {
       if (!obj.isReady()) continue;
+      const buf = obj.positionBuffer;
+      const count = obj.linesVertexCount;
+      if (!buf || count < 2) continue;
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      // 已删除的 buffer 绑定后 ARRAY_BUFFER_BINDING 可能为 null，必须跳过否则 drawArrays 报错
+      if (gl.getParameter(gl.ARRAY_BUFFER_BINDING) === null) {
+        obj.positionBuffer = null;
+        obj.ready = false;
+        continue;
+      }
+
       const model = obj.getModelMatrix();
       if (uniforms.model) {
         gl.uniformMatrix4fv(uniforms.model, false, model);
       }
-      
-      // 设置 alpha uniform（如果对象有 alpha 属性，否则使用 1.0）
       if (uniforms.alpha !== null && uniforms.alpha !== undefined) {
         const alpha = obj.alpha !== undefined ? obj.alpha : 1.0;
         gl.uniform1f(uniforms.alpha, alpha);
@@ -1261,15 +1274,20 @@ export class HoloRP {
 
       gl.enableVertexAttribArray(attrs.position);
       gl.enableVertexAttribArray(attrs.color);
-      const buf = obj.positionBuffer;
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
       gl.vertexAttribPointer(attrs.position, 3, gl.FLOAT, false, 24, 0);
       gl.vertexAttribPointer(attrs.color, 3, gl.FLOAT, false, 24, 12);
-      gl.drawArrays(gl.LINES, 0, obj.linesVertexCount);
+      try {
+        gl.drawArrays(gl.LINES, 0, count);
+      } catch (err) {
+        console.warn('[HoloRP] _renderLines drawArrays 失败，将对象标记为无效:', obj.id, err);
+        obj.positionBuffer = null;
+        obj.ready = false;
+      }
     }
 
-    gl.disableVertexAttribArray(attrs.color);
     gl.disableVertexAttribArray(attrs.position);
+    gl.disableVertexAttribArray(attrs.color);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
   }
 
   /**
