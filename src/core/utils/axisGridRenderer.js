@@ -144,16 +144,16 @@ void main() {
  * @private
  */
 function setupRenderState(gl, renderer, projectionMatrix, viewMatrix) {
-  const { program, attributes, uniforms } = renderer;
+  const { program, uniforms } = renderer;
   
-  // 使用轴网格程序
   gl.useProgram(program);
-  
-  // 设置 uniform
+  // 禁用所有 vertex attribute，避免上一 pass（如 LINES/Mesh）遗留的 enabled 导致 drawArrays 报错
+  const maxAttribs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 16;
+  for (let i = 0; i < maxAttribs; i++) gl.disableVertexAttribArray(i);
+
   gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
   gl.uniformMatrix4fv(uniforms.view, false, viewMatrix);
   
-  // 启用深度测试和深度写入（临时）
   gl.enable(gl.DEPTH_TEST);
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(true);  // 启用深度写入
@@ -162,9 +162,8 @@ function setupRenderState(gl, renderer, projectionMatrix, viewMatrix) {
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   
-  // 设置 attribute
-  gl.enableVertexAttribArray(attributes.position);
-  gl.enableVertexAttribArray(attributes.color);
+  // 不在此处 enable attribute，留到 bindBuffer + vertexAttribPointer 之后再 enable，
+  // 避免出现「已启用 attribute 但尚未绑定 buffer」导致 drawArrays 报错。
 }
 
 /**
@@ -211,12 +210,14 @@ export function renderGrid(gl, renderer, projectionMatrix, viewMatrix) {
   setupRenderState(gl, renderer, projectionMatrix, viewMatrix);
   
   const { buffers, attributes } = renderer;
-  
-  // 绘制网格（细线）
+  if (!buffers?.grid?.buffer) return restoreRenderState(gl, prevState);
+
   gl.lineWidth(1.0);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffers.grid.buffer);
   gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
   gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
+  gl.enableVertexAttribArray(attributes.position);
+  gl.enableVertexAttribArray(attributes.color);
   gl.drawArrays(gl.LINES, 0, buffers.grid.count);
   
   restoreRenderState(gl, prevState);
@@ -234,28 +235,25 @@ export function renderAxes(gl, renderer, projectionMatrix, viewMatrix) {
   setupRenderState(gl, renderer, projectionMatrix, viewMatrix);
   
   const { buffers, attributes } = renderer;
-  
-  // 绘制坐标轴（粗线）
+  if (!buffers?.xAxis?.buffer || !buffers?.yAxis?.buffer || !buffers?.zAxis?.buffer) {
+    return restoreRenderState(gl, prevState);
+  }
+
   gl.lineWidth(3.0);
-  
-  // X轴（红色）
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.xAxis.buffer);
-  gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
-  gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
-  gl.drawArrays(gl.LINES, 0, buffers.xAxis.count);
-  
-  // Y轴（绿色）
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.yAxis.buffer);
-  gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
-  gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
-  gl.drawArrays(gl.LINES, 0, buffers.yAxis.count);
-  
-  // Z轴（蓝色）
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.zAxis.buffer);
-  gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
-  gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
-  gl.drawArrays(gl.LINES, 0, buffers.zAxis.count);
-  
+
+  const drawAxis = (buffer, count) => {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.vertexAttribPointer(attributes.position, 3, gl.FLOAT, false, 24, 0);
+    gl.vertexAttribPointer(attributes.color, 3, gl.FLOAT, false, 24, 12);
+    gl.enableVertexAttribArray(attributes.position);
+    gl.enableVertexAttribArray(attributes.color);
+    gl.drawArrays(gl.LINES, 0, count);
+  };
+
+  drawAxis(buffers.xAxis.buffer, buffers.xAxis.count);
+  drawAxis(buffers.yAxis.buffer, buffers.yAxis.count);
+  drawAxis(buffers.zAxis.buffer, buffers.zAxis.count);
+
   restoreRenderState(gl, prevState);
 }
 

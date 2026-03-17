@@ -819,6 +819,8 @@ export function useFpsCameraControl(
 
     const speedMultiplier = cameraSpeedMultiplierRef.current;
     const moveSpeed = speedMultiplier * deltaTime * 60;
+    const verticalSpeedMultiplier = 0.5; // 上下移动（空格/Alt）相对水平 WASD 的倍率
+    const verticalMoveSpeed = moveSpeed * verticalSpeedMultiplier;
 
     let moved = false;
     const moveActions = [];
@@ -847,18 +849,18 @@ export function useFpsCameraControl(
       moveActions.push('右移');
     }
 
-    // 空格：上升
+    // 空格：上升（使用 verticalMoveSpeed）
     if (hasSpace) {
       const worldUp = worldUpRef.current || camera.worldUp;
-      camera.moveWorld(-worldUp[0] * moveSpeed, -worldUp[1] * moveSpeed, -worldUp[2] * moveSpeed);
+      camera.moveWorld(-worldUp[0] * verticalMoveSpeed, -worldUp[1] * verticalMoveSpeed, -worldUp[2] * verticalMoveSpeed);
       moved = true;
       moveActions.push('上升');
     }
 
-    // Shift / Alt：下降
+    // Shift / Alt：下降（使用 verticalMoveSpeed）
     if (hasShiftAlt) {
       const worldUp = worldUpRef.current || camera.worldUp;
-      camera.moveWorld(worldUp[0] * moveSpeed, worldUp[1] * moveSpeed, worldUp[2] * moveSpeed);
+      camera.moveWorld(worldUp[0] * verticalMoveSpeed, worldUp[1] * verticalMoveSpeed, worldUp[2] * verticalMoveSpeed);
       moved = true;
       moveActions.push('下降');
     }
@@ -930,7 +932,7 @@ export function useFpsCameraControl(
         hasGamepadInput = true;
       }
       if (gamepad.buttons[12]?.pressed || gamepad.buttons[13]?.pressed) {
-        camera.moveWorld(0, -moveSpeed * (gamepad.buttons[12]?.pressed - gamepad.buttons[13]?.pressed), 0);
+        camera.moveWorld(0, -verticalMoveSpeed * (gamepad.buttons[12]?.pressed - gamepad.buttons[13]?.pressed), 0);
         hasGamepadInput = true;
       }
       if (gamepad.buttons[14]?.pressed || gamepad.buttons[15]?.pressed) {
