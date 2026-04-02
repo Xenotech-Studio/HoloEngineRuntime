@@ -187,7 +187,10 @@ export class HoloRP {
     this.depthGamma = 1.5;           // Gamma 值，用于调整映射曲线的非线性程度（>1 时增强近处，<1 时增强远处）
     this.depthOpacityThreshold = 0.13; // 深度写入的像素不透明度阈值（0.0-1.0），过滤当前像素的透明度，默认0.13
     this.centerOpacityThreshold = 0.65; // 深度写入的中心点不透明度阈值（0.0-1.0），过滤高斯点中心位置的透明度，默认0.65
-    
+    // 高斯尺寸：0 = 三轴均为 gaussianScaleMin，1 = 纹理真实三轴 scale（与 PLY 缺省 exp scale 量级一致，便于看见）
+    this.gaussianScaleLerp = 1.0;
+    this.gaussianScaleMin = 0.01;
+
     // 初始化共享资源
     this._initSharedResources();
   }
@@ -819,7 +822,17 @@ export class HoloRP {
     if (uniforms.centerOpacityThreshold !== undefined && uniforms.centerOpacityThreshold !== null) {
       gl.uniform1f(uniforms.centerOpacityThreshold, this.centerOpacityThreshold);
     }
-    
+    if (uniforms.gaussianScaleLerp !== undefined && uniforms.gaussianScaleLerp !== null) {
+      const t = this.gaussianScaleLerp;
+      const clamped = typeof t === 'number' && Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 1;
+      gl.uniform1f(uniforms.gaussianScaleLerp, clamped);
+    }
+    if (uniforms.gaussianScaleMin !== undefined && uniforms.gaussianScaleMin !== null) {
+      const m = this.gaussianScaleMin;
+      const v = typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : 0.01;
+      gl.uniform1f(uniforms.gaussianScaleMin, v);
+    }
+
     // 绑定共享的顶点缓冲区（position）
     const aPosition = attributes?.position;
     if (aPosition !== undefined && aPosition >= 0 && this.vertexBuffer) {

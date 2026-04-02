@@ -11,6 +11,8 @@ export const vertexShader3DGSSource = `
   uniform vec2 focal;
   uniform vec2 viewport;
   uniform int sphericalHarmonicsDegree;
+  uniform float u_gaussianScaleLerp;
+  uniform float u_gaussianScaleMin;
   
   in vec2 position;
   in int index;
@@ -24,6 +26,7 @@ export const vertexShader3DGSSource = `
   
   void main () {
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
       uvec4 static0 = texelFetch(u_texture, ivec2(((uint(index) & 0xffu) << 2), uint(index) >> 8), 0);
       uvec4 static1 = texelFetch(u_texture, ivec2(((uint(index) & 0xffu) << 2) | 1u, uint(index) >> 8), 0);
@@ -43,7 +46,9 @@ export const vertexShader3DGSSource = `
         length(model[1].xyz),
         length(model[2].xyz)
       );
-      vec3 scale = gaussianScale * modelScale;
+      vec3 minGs = vec3(max(u_gaussianScaleMin, 0.0));
+      vec3 blendedGs = mix(minGs, gaussianScale, scaleT);
+      vec3 scale = blendedGs * modelScale;
       
       rot /= sqrt(dot(rot, rot));
 
@@ -94,16 +99,16 @@ export const vertexShader3DGSSource = `
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
       uint rgba = static1.w;
-      float opacity = float((rgba >> 24) & 0xffu) / 255.0;
-      
-      vColor = 
-        clamp(pos_proj.z/pos_proj.w+1.0, 0.0, 1.0) * 
-        vec4(1.0, 1.0, 1.0, opacity) *
-        vec4(
-          (rgba) & 0xffu, 
-          (rgba >> 8) & 0xffu, 
-          (rgba >> 16) & 0xffu, 
-          (rgba >> 24) & 0xffu) / 255.0;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float aEff = mix(1.0, splat.a, scaleT);
+      vColor = depthEff * vec4(1.0, 1.0, 1.0, aEff) * vec4(splat.rgb, aEff);
 
       vec2 vCenter = vec2(pos_proj) / pos_proj.w;
       float depthNDC = pos_proj.z / pos_proj.w;

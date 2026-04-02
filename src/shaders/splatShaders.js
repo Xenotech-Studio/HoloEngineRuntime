@@ -13,6 +13,8 @@ export const vertexShaderSource = `
   uniform vec2 focal;
   uniform vec2 viewport;
   uniform float time;
+  uniform float u_gaussianScaleLerp;
+  uniform float u_gaussianScaleMin;
   
   in vec2 position;
   in int index;
@@ -22,13 +24,15 @@ export const vertexShaderSource = `
   
   void main () {
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
       uvec4 motion1 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2) | 3u, uint(index) >> 10), 0);
       vec2 trbf = unpackHalf2x16(motion1.w);
       float dt = time - trbf.x;
 
       float topacity = exp(-1.0 * pow(dt / trbf.y, 2.0));
-      if(topacity < 0.02) return;
+      float topacityCull = mix(1.0, topacity, scaleT);
+      if (topacityCull < 0.02) return;
 
       uvec4 motion0 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2) | 2u, uint(index) >> 10), 0);
       uvec4 static0 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2), uint(index) >> 10), 0);
@@ -54,7 +58,9 @@ export const vertexShaderSource = `
         length(model[1].xyz),
         length(model[2].xyz)
       );
-      vec3 scale = gaussianScale * modelScale;
+      vec3 minGs = vec3(max(u_gaussianScaleMin, 0.0));
+      vec3 blendedGs = mix(minGs, gaussianScale, scaleT);
+      vec3 scale = blendedGs * modelScale;
       
       rot /= sqrt(dot(rot, rot));
 
@@ -104,14 +110,17 @@ export const vertexShaderSource = `
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
       uint rgba = static1.w;
-      vColor = 
-        clamp(pos.z/pos.w+1.0, 0.0, 1.0) * 
-        vec4(1.0, 1.0, 1.0, topacity) *
-        vec4(
-          (rgba) & 0xffu, 
-          (rgba >> 8) & 0xffu, 
-          (rgba >> 16) & 0xffu, 
-          (rgba >> 24) & 0xffu) / 255.0;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos.z / pos.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float topacityEff = mix(1.0, topacity, scaleT);
+      float alphaEff = mix(1.0, splat.a, scaleT);
+      vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
 
       vec2 vCenter = vec2(pos) / pos.w;
       float depthNDC = pos.z / pos.w;
