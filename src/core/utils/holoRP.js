@@ -190,6 +190,8 @@ export class HoloRP {
     // 高斯尺寸：0 = 三轴均为 gaussianScaleMin，1 = 纹理真实三轴 scale（与 PLY 缺省 exp scale 量级一致，便于看见）
     this.gaussianScaleLerp = 1.0;
     this.gaussianScaleMin = 0.01;
+    /** 4DGS shader `time`：为 null 时用 sin(墙钟) 动画；为 [0,1] 数字时强制该值（与自动运镜无关） */
+    this.fourDGaussianTimeUser = null;
 
     // 初始化共享资源
     this._initSharedResources();
@@ -198,6 +200,14 @@ export class HoloRP {
   /**
    * 初始化共享资源
    */
+  _resolveFourDGaussianTimeUniform() {
+    const u = this.fourDGaussianTimeUser;
+    if (typeof u === 'number' && Number.isFinite(u)) {
+      return Math.min(1, Math.max(0, u));
+    }
+    return Math.sin(Date.now() / 1000) / 2 + 1 / 2;
+  }
+
   _initSharedResources() {
     const gl = this.gl;
     
@@ -535,9 +545,8 @@ export class HoloRP {
         gl.uniformMatrix4fv(this.uniforms.view, false, viewMatrix);
       }
 
-      const time = Math.sin(Date.now() / 1000) / 2 + 1 / 2;
       if (this.uniforms && this.uniforms.time) {
-        gl.uniform1f(this.uniforms.time, time);
+        gl.uniform1f(this.uniforms.time, this._resolveFourDGaussianTimeUniform());
       }
 
       // 获取所有对象并按类型分组
@@ -811,8 +820,7 @@ export class HoloRP {
     
     // 4DGS需要time uniform，3DGS不需要
     if (is4DGS && uniforms.time) {
-      const time = Math.sin(Date.now() / 1000) / 2 + 1 / 2;
-      gl.uniform1f(uniforms.time, time);
+      gl.uniform1f(uniforms.time, this._resolveFourDGaussianTimeUniform());
     }
     
     // 设置深度写入的不透明度阈值
