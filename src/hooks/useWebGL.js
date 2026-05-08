@@ -335,7 +335,7 @@ export function useWebGL(canvasRef, options = {}) {
       console.error('WebGL initialization error:', err);
       setError(err);
     }
-  }, [canvasRef, options.antialias, options.xrCompatible]);
+  }, [canvasRef, options.antialias, options.xrCompatible, options.preserveDrawingBuffer]);
 
   return {
     gl,
