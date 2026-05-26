@@ -55,10 +55,12 @@ function createWorker(self) {
     let maxDepth = -Infinity;
     let minDepth = Infinity;
     let sizeList = new Int32Array(vertexCount);
-    const hasMotion = useMotionEvolvedSort && motion && trbfCenter;
+    // 注意: 这里不要再声明 hasMotion 同名 const, 会跟外层 hasMotion 撞 TDZ -> 整个
+    // runSort 抛 ReferenceError -> worker 永远不出 depthIndex -> 黑屏.
+    const applyMotion = useMotionEvolvedSort && motion && trbfCenter;
     for (let i = 0; i < vertexCount; i++) {
       let x = positions[3 * i + 0], y = positions[3 * i + 1], z = positions[3 * i + 2];
-      if (hasMotion) {
+      if (applyMotion) {
         // E5: 加上 motion polynomial 给出的当前 t 下的位置。每帧重算保持跟 STG CUDA
         // rasterizer 同款 motion-evolved 排序。
         // 索引: motion[9i+0..2]=linear (motion_0..2), [3..5]=quadratic (motion_3..5),
