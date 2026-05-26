@@ -31,6 +31,7 @@ function createWorker(self) {
   function runSort(viewProj, forceSort = false) {
     if (!positions) return;
     if (!viewProj) return;
+    const sortStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const strategyChanged = lastSortStrategy !== sortStrategy;
     // E5: motion-evolved sort 下 time 一变就要 re-sort, view 没变也算.
     const timeChanged = useMotionEvolvedSort && motion && lastSortedTime !== currentTime;
@@ -77,7 +78,8 @@ function createWorker(self) {
       let depthIndex = new Uint32Array(vertexCount);
       for (let i = 0; i < vertexCount; i++) depthIndex[i] = i;
       lastProj = viewProj;
-      self.postMessage({ depthIndex, viewProj, vertexCount }, [depthIndex.buffer]);
+      const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
+      self.postMessage({ depthIndex, viewProj, vertexCount, sortMs }, [depthIndex.buffer]);
       return;
     }
 
@@ -111,10 +113,11 @@ function createWorker(self) {
     lastProj = viewProj;
     lastSortStrategy = sortStrategy;
     lastSortedTime = currentTime;
+    const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
     if (enableDebugLogs) {
-      console.log('[depthWorker] 排序完成，发送结果:', { sortStrategy, vertexCount, depthIndexLength: depthIndex.length });
+      console.log('[depthWorker] 排序完成，发送结果:', { sortStrategy, vertexCount, depthIndexLength: depthIndex.length, sortMs });
     }
-    self.postMessage({ depthIndex, viewProj, vertexCount }, [depthIndex.buffer]);
+    self.postMessage({ depthIndex, viewProj, vertexCount, sortMs }, [depthIndex.buffer]);
   }
 
   const throttledSort = () => {
