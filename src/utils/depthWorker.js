@@ -6,6 +6,7 @@ function createWorker(self) {
   let positions;        // [N×3] static xyz fp32 (from u32[0..2] uintBitsToFloat)
   let motion;           // [N×9] motion polynomial coefficients (fp32 decoded from packed half2x16)
   let trbfCenter;       // [N] trbf center fp32 (decoded from half2x16 low half of u32[15])
+  let hasMotion = false; // 是否有非零 motion (3DGS 全 0, 4DGS 非 0). 决定是否每帧 re-sort.
   let currentTime = 0.5; // 4DGS frozen time; updated each frame via postMessage
   let useMotionEvolvedSort = true; // E5: sort by motion-evolved positions (not static_xyz)
   let viewProj;
@@ -33,9 +34,11 @@ function createWorker(self) {
     if (!viewProj) return;
     const sortStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const strategyChanged = lastSortStrategy !== sortStrategy;
-    // E5: motion-evolved sort 下 time 一变就要 re-sort, view 没变也算.
-    const timeChanged = useMotionEvolvedSort && motion && lastSortedTime !== currentTime;
-    if (!forceSort && !strategyChanged && !timeChanged && lastVertexCount === vertexCount && lastProj) {
+    // E5: motion-evolved sort 下 evolved 位置每帧都不同 (time 变 → motion poly 评估变),
+    // 即便 view 完全静止也必须 re-sort. 不走 skip 路径.
+    const motionAnimating = useMotionEvolvedSort && motion && hasMotion;
+    const timeChanged = motionAnimating && lastSortedTime !== currentTime;
+    if (!forceSort && !strategyChanged && !timeChanged && !motionAnimating && lastVertexCount === vertexCount && lastProj) {
       let dist = Math.hypot(...[2, 6, 10].map((k) => lastProj[k] - viewProj[k]));
       if (dist < 0.01) {
         if (enableDebugLogs) console.log('[depthWorker] 跳过排序：view矩阵变化太小且策略 / 时间未改变');
@@ -168,6 +171,11 @@ function createWorker(self) {
         motion[mb + 8] = halfBitsToFloat(m12 & 0xFFFF);
         // trbf: u32[15] low half = trbf_center, high half = exp(trbf_scale) (not needed for sort)
         trbfCenter[i] = halfBitsToFloat(u32view[base + 15] & 0xFFFF);
+      }
+      // 一次性扫描判定: motion 是否非零. 3DGS splatv u32[8..15] 全 0, 不必每帧 re-sort.
+      hasMotion = false;
+      for (let k = 0; k < motion.length; k++) {
+        if (motion[k] !== 0) { hasMotion = true; break; }
       }
     } else if (e.data.vertexCount) {
       vertexCount = e.data.vertexCount;
