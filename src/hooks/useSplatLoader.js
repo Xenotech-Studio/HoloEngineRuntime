@@ -118,6 +118,9 @@ export function useSplatLoader() {
       let textureWidth = 0;
       let textureHeight = 0;
       let cameras = null;
+      // 默认 lite 格式: 4 pixels/gauss = 16 u32. hp_scale_rot 扩展为 8 pixels/gauss = 32 u32.
+      let gaussStridePixels = 4;
+      let precisionVariant = 'lite';
       const chunkHandler = (chunk, buffer, remaining, chunks) => {
         if (!remaining && chunk.type === 'magic') {
           const intView = new Uint32Array(buffer);
@@ -141,6 +144,13 @@ export function useSplatLoader() {
                 textureWidth = chunkItem.texwidth;
                 textureHeight = chunkItem.texheight;
                 if (chunkItem.cameras) cameras = chunkItem.cameras;
+                // 解析高精度变体元数据。未声明则按 lite 处理。
+                if (typeof chunkItem.gauss_stride_pixels === 'number') {
+                  gaussStridePixels = chunkItem.gauss_stride_pixels;
+                }
+                if (typeof chunkItem.precision_variant === 'string') {
+                  precisionVariant = chunkItem.precision_variant;
+                }
               }
             }
           } catch (err) {
@@ -150,7 +160,8 @@ export function useSplatLoader() {
         } else if (chunk.type === 'splat') {
           if (currentVertexCount > lastVertexCount || remaining === 0) {
             lastVertexCount = currentVertexCount;
-            currentVertexCount = Math.floor((buffer.byteLength - remaining) / 4 / 16);
+            const strideU32 = gaussStridePixels * 4;
+            currentVertexCount = Math.floor((buffer.byteLength - remaining) / 4 / strideU32);
             const texdata = new Uint32Array(buffer);
             textureData = texdata;
             textureRef.current = {
@@ -158,7 +169,9 @@ export function useSplatLoader() {
               width: textureWidth,
               height: textureHeight,
               buffer: new Float32Array(buffer),
-              cameras: cameras
+              cameras: cameras,
+              gaussStridePixels,
+              precisionVariant,
             };
             setVertexCount(currentVertexCount);
           }

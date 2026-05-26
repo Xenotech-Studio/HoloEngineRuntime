@@ -7,7 +7,7 @@ export const vertexShaderSource = `
   #version 300 es
   precision highp float;
   precision highp int;
-  
+
   uniform highp usampler2D u_texture;
   uniform mat4 projection, view, model;
   uniform vec2 focal;
@@ -15,27 +15,49 @@ export const vertexShaderSource = `
   uniform float time;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
-  
+  // splatv 精度变体支持。
+  //   stride=4 pixels/gauss (16 u32) — lite (默认): 1024 gauss/row,
+  //       columnMask=0x3FFu, columnShift=2, rowShift=10.
+  //   stride=8 pixels/gauss (32 u32) — hp_scale_rot: 512 gauss/row,
+  //       columnMask=0x1FFu, columnShift=3, rowShift=9. 在 pixel 4-5 (u32 16..22) 增量
+  //       保存 fp32 rotation + fp32 scale, pixel 0-3 与 lite bit-equivalent.
+  //   u_useHpScaleRot=true 时 shader 从 pixel 4-5 读 fp32 rot/scale 代替 fp16 fallback.
+  uniform uint u_strideColMask;
+  uniform int  u_strideColShift;
+  uniform int  u_strideRowShift;
+  uniform bool u_useHpScaleRot;
+
   in vec2 position;
   in int index;
-  
+
   out vec4 vColor;
   out vec2 vPosition;
-  
+
+  ivec2 gaussCoord(uint subPixel) {
+      // 把 gauss index + sub-pixel 偏移转成纹理坐标。
+      uint col = ((uint(index) & u_strideColMask) << uint(u_strideColShift)) | subPixel;
+      uint row = uint(index) >> uint(u_strideRowShift);
+      return ivec2(int(col), int(row));
+  }
+
   void main () {
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
-      uvec4 motion1 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2) | 3u, uint(index) >> 10), 0);
+      uvec4 motion1 = texelFetch(u_texture, gaussCoord(3u), 0);
       vec2 trbf = unpackHalf2x16(motion1.w);
       float dt = time - trbf.x;
 
-      float topacity = exp(-1.0 * pow(dt / trbf.y, 2.0));
+      // Use x*x instead of pow(x, 2.0) -- some ANGLE/Metal/driver implementations of pow
+      // hit a 0^positive edge case that produces NaN, which then cascades through topacity
+      // and breaks alpha blending for gaussians whose trbf_center happens to equal time.
+      float dtOverScale = dt / trbf.y;
+      float topacity = exp(-(dtOverScale * dtOverScale));
       float topacityCull = mix(1.0, topacity, scaleT);
       if (topacityCull < 0.02) return;
 
-      uvec4 motion0 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2) | 2u, uint(index) >> 10), 0);
-      uvec4 static0 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2), uint(index) >> 10), 0);
+      uvec4 motion0 = texelFetch(u_texture, gaussCoord(2u), 0);
+      uvec4 static0 = texelFetch(u_texture, gaussCoord(0u), 0);
 
       vec2 m0 = unpackHalf2x16(motion0.x), m1 = unpackHalf2x16(motion0.y), m2 = unpackHalf2x16(motion0.z), 
            m3 = unpackHalf2x16(motion0.w), m4 = unpackHalf2x16(motion1.x); 
@@ -48,10 +70,22 @@ export const vertexShaderSource = `
   
       float clip = 1.2 * pos.w;
       if (pos.z < -clip || pos.x < -clip || pos.x > clip || pos.y < -clip || pos.y > clip) return;
-      uvec4 static1 = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 2) | 1u, uint(index) >> 10), 0);
+      uvec4 static1 = texelFetch(u_texture, gaussCoord(1u), 0);
 
-      vec4 rot = vec4(unpackHalf2x16(static0.w).xy, unpackHalf2x16(static1.x).xy) + trot;
-      vec3 gaussianScale = vec3(unpackHalf2x16(static1.y).xy, unpackHalf2x16(static1.z).x);
+      vec4 rot;
+      vec3 gaussianScale;
+      if (u_useHpScaleRot) {
+          // hp_scale_rot: pixel 4 (u32[16..19]) = fp32 rotation (xyzw)
+          //               pixel 5 (u32[20..22]) = fp32 scale (xyz), u32[23] = pad
+          uvec4 hpRot = texelFetch(u_texture, gaussCoord(4u), 0);
+          uvec4 hpScl = texelFetch(u_texture, gaussCoord(5u), 0);
+          rot = vec4(uintBitsToFloat(hpRot.x), uintBitsToFloat(hpRot.y),
+                     uintBitsToFloat(hpRot.z), uintBitsToFloat(hpRot.w)) + trot;
+          gaussianScale = vec3(uintBitsToFloat(hpScl.x), uintBitsToFloat(hpScl.y), uintBitsToFloat(hpScl.z));
+      } else {
+          rot = vec4(unpackHalf2x16(static0.w).xy, unpackHalf2x16(static1.x).xy) + trot;
+          gaussianScale = vec3(unpackHalf2x16(static1.y).xy, unpackHalf2x16(static1.z).x);
+      }
       
       vec3 modelScale = vec3(
         length(model[0].xyz),

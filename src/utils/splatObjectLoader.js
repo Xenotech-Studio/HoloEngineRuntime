@@ -21,16 +21,17 @@ export function createSplatIndexBuffer(gl) {
   return gl.createBuffer();
 }
 
-export function createSplatWorker(textureBuffer, onMessage, onError) {
+export function createSplatWorker(textureBuffer, onMessage, onError, gaussStridePixels = 4) {
   const worker = createDepthWorker();
   if (onMessage) worker.onmessage = onMessage;
   if (onError) worker.onerror = onError;
-  worker.postMessage({ texture: textureBuffer, remaining: 0 });
+  worker.postMessage({ texture: textureBuffer, remaining: 0, gaussStridePixels });
   return worker;
 }
 
-export function calculateVertexCount(buffer) {
-  return Math.floor(buffer.byteLength / 4 / 16);
+export function calculateVertexCount(buffer, gaussStridePixels = 4) {
+  const strideU32 = gaussStridePixels * 4;
+  return Math.floor(buffer.byteLength / 4 / strideU32);
 }
 
 export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObject, onFirstDepthSort, onError }) {
@@ -59,6 +60,8 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
 
 export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirstDepthSort, onWorkerError, onWebGLError }) {
   if (!gl || !textureData) throw new Error('loadAndSetupSplatObject: gl and textureData are required');
+  const gaussStridePixels = textureData.gaussStridePixels || 4;
+  const precisionVariant = textureData.precisionVariant || 'lite';
   const texture = createSplatTexture(gl, textureData);
   const indexBuffer = createSplatIndexBuffer(gl);
   const workerMessageHandler = createStandardWorkerMessageHandler({
@@ -68,8 +71,8 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     onFirstDepthSort,
     onError: onWebGLError
   });
-  const worker = createSplatWorker(textureData.buffer, workerMessageHandler, onWorkerError);
-  const vertexCount = calculateVertexCount(textureData.buffer);
+  const worker = createSplatWorker(textureData.buffer, workerMessageHandler, onWorkerError, gaussStridePixels);
+  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels);
   if (targetObject) {
     targetObject.texture = texture;
     targetObject.textureWidth = textureData.width;
@@ -77,6 +80,8 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     targetObject.indexBuffer = indexBuffer;
     targetObject.vertexCount = vertexCount;
     targetObject.worker = worker;
+    targetObject.gaussStridePixels = gaussStridePixels;
+    targetObject.precisionVariant = precisionVariant;
   }
   return {
     texture,
@@ -84,16 +89,19 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     worker,
     vertexCount,
     textureWidth: textureData.width,
-    textureHeight: textureData.height
+    textureHeight: textureData.height,
+    gaussStridePixels,
+    precisionVariant,
   };
 }
 
 export function loadSplatObject({ gl, textureData, onWorkerMessage, onWorkerError }) {
   if (!gl || !textureData) throw new Error('loadSplatObject: gl and textureData are required');
+  const gaussStridePixels = textureData.gaussStridePixels || 4;
   const texture = createSplatTexture(gl, textureData);
   const indexBuffer = createSplatIndexBuffer(gl);
-  const worker = createSplatWorker(textureData.buffer, onWorkerMessage, onWorkerError);
-  const vertexCount = calculateVertexCount(textureData.buffer);
+  const worker = createSplatWorker(textureData.buffer, onWorkerMessage, onWorkerError, gaussStridePixels);
+  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels);
   return {
     texture,
     indexBuffer,

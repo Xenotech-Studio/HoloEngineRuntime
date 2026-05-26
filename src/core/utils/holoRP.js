@@ -906,9 +906,14 @@ export class HoloRP {
       const viewModel = multiply4(viewMatrix || identity4(), modelMatrix);
       const viewProj = multiply4(projectionMatrix, viewModel);
       if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
-        // 先更新排序策略（如果需要）
+        // sortStrategy 只在实际变化时再发一次；每帧发会让 worker 反复 force-sort,
+        // 还会卡住 sortRunning 让后续 {view,time} 的实际 sort 被吞掉一帧 (E5 motion-evolved
+        // sort 需要每帧的 currentTime 进入 runSort).
         const sortStrategy = obj.sortStrategy || 'back-to-front';
-        obj.worker.postMessage({ sortStrategy });
+        if (obj._lastSentSortStrategy !== sortStrategy) {
+          obj.worker.postMessage({ sortStrategy });
+          obj._lastSentSortStrategy = sortStrategy;
+        }
         // 然后更新view矩阵
         onUpdateWorker(obj.id, obj.worker, viewProj);
       }
@@ -942,6 +947,27 @@ export class HoloRP {
       // 设置SH阶数（3DGS）
       if (!is4DGS && activeUniforms.sphericalHarmonicsDegree !== undefined && activeUniforms.sphericalHarmonicsDegree !== null) {
         gl.uniform1i(activeUniforms.sphericalHarmonicsDegree, obj.sphericalHarmonicsDegree || 0);
+      }
+
+      // 4DGS splatv 精度变体: 把每个对象的 gauss stride / hp_scale_rot 标志推到 shader
+      // u_strideColMask / u_strideColShift / u_strideRowShift / u_useHpScaleRot uniforms 上.
+      // 默认 stride=4 (lite), hp=false; obj.gaussStridePixels=8 + obj.precisionVariant='hp_scale_rot' 时切到 hp 路径.
+      if (is4DGS) {
+        const strideP = obj.gaussStridePixels === 8 ? 8 : 4;
+        const useHp = obj.precisionVariant === 'hp_scale_rot';
+        if (activeUniforms.strideColMask !== undefined && activeUniforms.strideColMask !== null) {
+          // stride=4 → 1024 gauss/row, mask=0x3FF; stride=8 → 512 gauss/row, mask=0x1FF
+          gl.uniform1ui(activeUniforms.strideColMask, strideP === 8 ? 0x1FF : 0x3FF);
+        }
+        if (activeUniforms.strideColShift !== undefined && activeUniforms.strideColShift !== null) {
+          gl.uniform1i(activeUniforms.strideColShift, strideP === 8 ? 3 : 2);
+        }
+        if (activeUniforms.strideRowShift !== undefined && activeUniforms.strideRowShift !== null) {
+          gl.uniform1i(activeUniforms.strideRowShift, strideP === 8 ? 9 : 10);
+        }
+        if (activeUniforms.useHpScaleRot !== undefined && activeUniforms.useHpScaleRot !== null) {
+          gl.uniform1i(activeUniforms.useHpScaleRot, useHp ? 1 : 0);
+        }
       }
 
       // 绑定该对象的索引缓冲区
