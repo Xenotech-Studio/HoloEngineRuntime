@@ -10,6 +10,24 @@ import { DepthVisualizationRenderer } from './depthVisualizationRenderer';
 import { Camera } from './Camera';
 
 /**
+ * 4DGS 动画进度 easing：半程 t∈[0,1] → progress∈[0,1]。
+ * k=0：纯 sin 缓入缓出；k>0：两端各 (1-k)/2 的 progress 区间做 sin 缓冲，中间 k 线性匀速。
+ * 速度在边界连续（由 tSin 公式保证），不会出现突跳。
+ */
+function _easeHalfCycle(t, k) {
+  if (k <= 0) return (1 - Math.cos(Math.PI * t)) / 2;
+  // tSin: 转向 sin 段在归一化时间轴上的宽度
+  const tSin = (k * Math.PI) / (4 - 4 * k + 2 * k * Math.PI);
+  if (t <= tSin)
+    return (k / 2) * (1 - Math.cos(Math.PI * t / (2 * tSin)));
+  if (t <= 1 - tSin) {
+    const v = (1 - k) / (1 - 2 * tSin);
+    return k / 2 + v * (t - tSin);
+  }
+  return 1 - _easeHalfCycle(1 - t, k);
+}
+
+/**
  * 渲染类型枚举
  */
 export const RenderType = {
@@ -192,6 +210,10 @@ export class HoloRP {
     this.gaussianScaleMin = 0.01;
     /** 4DGS shader `time`：为 null 时用 sin(墙钟) 动画；为 [0,1] 数字时强制该值（与自动运镜无关） */
     this.fourDGaussianTimeUser = null;
+    /** 4DGS 自动动画全周期秒数（fourDGaussianTimeUser 为 null 时生效） */
+    this.fourDGSPeriodSec = 6;
+    /** 4DGS 动画匀速中间段比例 0~1（0=纯 sin，>0=两端缓冲+中间匀速） */
+    this.fourDGSLinearFrac = 0;
 
     // 初始化共享资源
     this._initSharedResources();
@@ -205,7 +227,13 @@ export class HoloRP {
     if (typeof u === 'number' && Number.isFinite(u)) {
       return Math.min(1, Math.max(0, u));
     }
-    return Math.sin(Date.now() / 1000) / 2 + 1 / 2;
+    const T = (typeof this.fourDGSPeriodSec === 'number' && this.fourDGSPeriodSec > 0)
+      ? this.fourDGSPeriodSec : 6;
+    const k = (typeof this.fourDGSLinearFrac === 'number' && this.fourDGSLinearFrac > 0)
+      ? Math.min(1, this.fourDGSLinearFrac) : 0;
+    const tFull = (Date.now() / 1000 % T) / T;
+    const tHalf = tFull < 0.5 ? tFull * 2 : (1 - tFull) * 2;
+    return _easeHalfCycle(tHalf, k);
   }
 
   _initSharedResources() {
