@@ -26,8 +26,6 @@ export function useFpsCameraControl(
   const mouseStartRef = useRef({ x: 0, y: 0 });
   const touchStartRef = useRef({ x: 0, y: 0, altX: 0, altY: 0 });
   const carouselRef = useRef(false);
-  const currentCameraIndexRef = useRef(0);
-  const jumpDeltaRef = useRef(0);
   const worldUpRef = useRef(null); // 世界的"上"方向（从初始相机的 UP 方向提取）
   const cameraSpeedMultiplierRef = useRef(cameraSpeedMultiplier); // 使用 ref 存储最新的速度倍率
   
@@ -353,50 +351,36 @@ export function useFpsCameraControl(
         activeKeysRef.current.push(e.code);
       }
 
-      // 数字键切换相机
-      if (/\d/.test(e.key) && camerasRef.current) {
-        const index = parseInt(e.key);
-        if (index < camerasRef.current.length) {
-          currentCameraIndexRef.current = index;
-          const cam = camerasRef.current[index];
-          // 确保是 Camera 实例
-          if (!(cam instanceof Camera)) {
-            cameraRef.current = Camera.fromPlainObject(cam);
-          } else {
-            cameraRef.current = cam;
-          }
-          updateViewMatrix(cameraRef.current);
-          notifyUserInput();
-          if (onCameraChange) onCameraChange(cameraRef.current, index);
+      // +/- 调整当前相机 FOV（垂直 FOV）：
+      //   +（或 =）减小 FOV → 放大画面
+      //   -（或 _）增大 FOV → 缩小画面
+      // 每次步进约 1 度，FOV 限制在 1°~179°
+      if (['+', '=', '-', '_'].includes(e.key) && cameraRef.current) {
+        // 确保是 Camera 实例
+        if (!(cameraRef.current instanceof Camera)) {
+          cameraRef.current = Camera.fromPlainObject(cameraRef.current);
         }
-      }
+        const camera = cameraRef.current;
+        const height = camera.height;
+        const fx0 = camera.fx;
+        const fy0 = camera.fy;
 
-      // +/- 切换相机
-      if (['-', '_'].includes(e.key) && camerasRef.current) {
-        currentCameraIndexRef.current = (currentCameraIndexRef.current + camerasRef.current.length - 1) % camerasRef.current.length;
-        const cam = camerasRef.current[currentCameraIndexRef.current];
-        // 确保是 Camera 实例
-        if (!(cam instanceof Camera)) {
-          cameraRef.current = Camera.fromPlainObject(cam);
-        } else {
-          cameraRef.current = cam;
+        if (height > 0 && fy0 > 0) {
+          // 当前垂直 FOV（度）
+          const currentFovDeg = (2 * Math.atan(height / (2 * fy0)) * 180) / Math.PI;
+          // + / = 减小 FOV（放大），- / _ 增大 FOV（缩小）
+          const delta = ['+', '='].includes(e.key) ? -1 : 1;
+          const newFovDeg = Math.max(1, Math.min(179, currentFovDeg + delta));
+          const newFovRad = (newFovDeg * Math.PI) / 180;
+          const newFy = height / (2 * Math.tan(newFovRad / 2));
+          // 按相同比例缩放 fx，保持横纵比一致
+          const scale = newFy / fy0;
+          camera.fx = fx0 * scale;
+          camera.fy = newFy;
+
+          updateViewMatrix(camera);
+          notifyUserInput();
         }
-        updateViewMatrix(cameraRef.current);
-        notifyUserInput();
-        if (onCameraChange) onCameraChange(cameraRef.current, currentCameraIndexRef.current);
-      }
-      if (['+', '='].includes(e.key) && camerasRef.current) {
-        currentCameraIndexRef.current = (currentCameraIndexRef.current + 1) % camerasRef.current.length;
-        const cam = camerasRef.current[currentCameraIndexRef.current];
-        // 确保是 Camera 实例
-        if (!(cam instanceof Camera)) {
-          cameraRef.current = Camera.fromPlainObject(cam);
-        } else {
-          cameraRef.current = cam;
-        }
-        updateViewMatrix(cameraRef.current);
-        notifyUserInput();
-        if (onCameraChange) onCameraChange(cameraRef.current, currentCameraIndexRef.current);
       }
 
       // V 键：保存视图矩阵到 URL
