@@ -19,7 +19,8 @@ export function useFpsCameraControl(
   onNotifyUserInput = null,  // 当用户有输入时通知外部（用于中断自动插值）
   disableLeftMouseButton = false,  // 如果为true，禁用左键转视野（仅保留右键）
   cameraSpeedMultiplier = 0.5,  // 相机移动速度倍率（由 EditorViewer 计算）
-  enabled = true  // 是否启用此控制模式
+  enabled = true,  // 是否启用此控制模式
+  onFovDelta = null  // +/- 键调整 FOV 时回调 delta（度）：-1=放大(减小FOV)，+1=缩小(增大FOV)；实际状态与 clamp 由外部管理
 ) {
   const activeKeysRef = useRef([]);
   const mouseDownRef = useRef(false);
@@ -351,36 +352,15 @@ export function useFpsCameraControl(
         activeKeysRef.current.push(e.code);
       }
 
-      // +/- 调整当前相机 FOV（垂直 FOV）：
-      //   +（或 =）减小 FOV → 放大画面
-      //   -（或 _）增大 FOV → 缩小画面
-      // 每次步进约 1 度，FOV 限制在 1°~179°
-      if (['+', '=', '-', '_'].includes(e.key) && cameraRef.current) {
-        // 确保是 Camera 实例
-        if (!(cameraRef.current instanceof Camera)) {
-          cameraRef.current = Camera.fromPlainObject(cameraRef.current);
-        }
-        const camera = cameraRef.current;
-        const height = camera.height;
-        const fx0 = camera.fx;
-        const fy0 = camera.fy;
-
-        if (height > 0 && fy0 > 0) {
-          // 当前垂直 FOV（度）
-          const currentFovDeg = (2 * Math.atan(height / (2 * fy0)) * 180) / Math.PI;
-          // + / = 减小 FOV（放大），- / _ 增大 FOV（缩小）
-          const delta = ['+', '='].includes(e.key) ? -1 : 1;
-          const newFovDeg = Math.max(1, Math.min(179, currentFovDeg + delta));
-          const newFovRad = (newFovDeg * Math.PI) / 180;
-          const newFy = height / (2 * Math.tan(newFovRad / 2));
-          // 按相同比例缩放 fx，保持横纵比一致
-          const scale = newFy / fy0;
-          camera.fx = fx0 * scale;
-          camera.fy = newFy;
-
-          updateViewMatrix(camera);
-          notifyUserInput();
-        }
+      // +/- 调整当前相机 FOV（垂直 FOV），每次步进约 1 度：
+      //   +（或 =）减小 FOV → 放大画面 → onFovDelta(-1)
+      //   -（或 _）增大 FOV → 缩小画面 → onFovDelta(+1)
+      // 注意：FOV 状态由外部（拥有 targetVerticalFOV 的组件）持有，这里只冒泡 delta，
+      //       clamp（1°~179°）在外部处理；直接 mutate Camera 在解耦 pipeline 相机的场景下无效。
+      if (['+', '=', '-', '_'].includes(e.key) && onFovDelta) {
+        const delta = ['+', '='].includes(e.key) ? -1 : 1;
+        onFovDelta(delta);
+        notifyUserInput();
       }
 
       // V 键：保存视图矩阵到 URL
@@ -428,7 +408,7 @@ export function useFpsCameraControl(
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [enabled, viewMatrixRef, camerasRef, updateViewMatrix, onCameraChange, notifyUserInput]);
+  }, [enabled, viewMatrixRef, camerasRef, updateViewMatrix, onCameraChange, notifyUserInput, onFovDelta]);
 
   // 鼠标控制
   useEffect(() => {
