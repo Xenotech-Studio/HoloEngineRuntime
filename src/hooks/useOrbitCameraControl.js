@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { Camera } from '../core/utils/Camera';
+import { Camera, PITCH_LIMIT_RAD } from '../core/utils/Camera';
 import { globalGizmoDragging } from '../utils/gizmoState';
 
 /**
@@ -280,7 +280,7 @@ export function useOrbitCameraControl(
 
     let forwardAfterYaw = normalize([-offset[0], -offset[1], -offset[2]], [0, 0, 1]);
     const currentPitch = Math.asin(Math.max(-1, Math.min(1, dot(forwardAfterYaw, worldUp))));
-    const nextPitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, currentPitch + dPitch));
+    const nextPitch = Math.max(-PITCH_LIMIT_RAD, Math.min(PITCH_LIMIT_RAD, currentPitch + dPitch));
     const appliedPitch = nextPitch - currentPitch;
 
     if (Math.abs(appliedPitch) > 1e-6) {

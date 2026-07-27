@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { invert4, translate4, rotate4, getViewMatrix } from '../core/utils/webgl';
-import { Camera } from '../core/utils/Camera';
+import { Camera, PITCH_LIMIT_RAD } from '../core/utils/Camera';
 import { globalGizmoDragging } from '../utils/gizmoState';
 
 /**
@@ -157,7 +157,7 @@ export function useFpsCameraControl(
     // 计算 pitch（垂直角度）：相对于水平面的角度
     // pitch = asin(forwardDir 在 worldUp 方向上的分量)
     const pitchRad = Math.asin(Math.max(-1, Math.min(1, worldUpComponent)));
-    const clampedPitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitchRad));
+    const clampedPitch = Math.max(-PITCH_LIMIT_RAD, Math.min(PITCH_LIMIT_RAD, pitchRad));
 
     // 计算 yaw（水平角度）
     // 使用 forwardHorizontalRef 作为参考方向
