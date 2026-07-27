@@ -10,6 +10,9 @@
 
 import { multiply4, invert4 } from './webgl';
 
+// pitch 限制在 ±80°，远离竖直视角，避免接近万向锁时 yaw 失效
+const PITCH_LIMIT_RAD = (4 * Math.PI) / 9;
+
 export class Camera {
   /**
    * 创建相机实例
@@ -85,7 +88,7 @@ export class Camera {
 
   set pitchRad(value) {
     // 限制 pitch 范围，避免万向锁
-    this._pitchRad = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, value));
+    this._pitchRad = Math.max(-PITCH_LIMIT_RAD, Math.min(PITCH_LIMIT_RAD, value));
     this._invalidateCache();
   }
 
@@ -420,8 +423,8 @@ export class Camera {
   rotate(dYaw, dPitch) {
     this._yawRad += dYaw;
     this._pitchRad = Math.max(
-      -Math.PI / 2 + 0.01,
-      Math.min(Math.PI / 2 - 0.01, this._pitchRad + dPitch)
+      -PITCH_LIMIT_RAD,
+      Math.min(PITCH_LIMIT_RAD, this._pitchRad + dPitch)
     );
     this._invalidateCache();
   }
