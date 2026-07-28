@@ -10,10 +10,10 @@
 
 import { multiply4, invert4 } from './webgl';
 
-// pitch 限制在 ±80°，远离竖直视角，避免接近万向锁时 yaw 失效
+// pitch 限制在 ±89.9°，接近但不到竖直，避免万向锁区
 // 所有对 pitch 做 clamp 的地方（包括各控制 hook）必须共用此常量，
 // 否则外部先按更宽的范围移动了相机位置、再被 setter 收紧，会导致位置与朝向不一致
-export const PITCH_LIMIT_RAD = (4 * Math.PI) / 9;
+export const PITCH_LIMIT_RAD = (89.9 * Math.PI) / 180;
 
 export class Camera {
   /**

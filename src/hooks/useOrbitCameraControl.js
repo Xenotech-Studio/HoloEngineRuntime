@@ -268,59 +268,48 @@ export function useOrbitCameraControl(
     ];
     targetRef.current = pivot;
 
-    let offset = [
-      cameraPos[0] - pivot[0],
-      cameraPos[1] - pivot[1],
-      cameraPos[2] - pivot[2],
+    // 单一状态源：把朝向分解为「水平方向 + 仰角」，增量与 clamp 都在角度空间进行，
+    // 再用与 Camera._buildRotationFromYawPitch 完全相同的公式重建 forward，
+    // 位置与朝向由同一组已 clamp 的角度导出——两者在定义上一致，
+    // 不存在“位置先转过头、朝向再被 setter 截断”的失配泄漏成平移的可能
+    const upComponent = dot(forward, worldUp);
+    const elevation = Math.asin(Math.max(-1, Math.min(1, upComponent)));
+
+    let horizontal = [
+      forward[0] - upComponent * worldUp[0],
+      forward[1] - upComponent * worldUp[1],
+      forward[2] - upComponent * worldUp[2],
     ];
-
-    if (Math.abs(dYaw) > 1e-6) {
-      offset = rotateAroundAxis(offset, worldUp, dYaw);
-    }
-
-    let forwardAfterYaw = normalize([-offset[0], -offset[1], -offset[2]], [0, 0, 1]);
-    const currentPitch = Math.asin(Math.max(-1, Math.min(1, dot(forwardAfterYaw, worldUp))));
-    const nextPitch = Math.max(-PITCH_LIMIT_RAD, Math.min(PITCH_LIMIT_RAD, currentPitch + dPitch));
-    const appliedPitch = nextPitch - currentPitch;
-
-    if (Math.abs(appliedPitch) > 1e-6) {
-      let right = cross(worldUp, forwardAfterYaw);
-      right = normalize(right, [1, 0, 0]);
-      offset = rotateAroundAxis(offset, right, appliedPitch);
-    }
-
-    const newCameraPos = [
-      pivot[0] + offset[0],
-      pivot[1] + offset[1],
-      pivot[2] + offset[2],
-    ];
-
-    const newForward = normalize([
-      pivot[0] - newCameraPos[0],
-      pivot[1] - newCameraPos[1],
-      pivot[2] - newCameraPos[2],
-    ], [0, 0, 1]);
-
-    const forwardUpComponent = dot(newForward, worldUp);
-    const pitchRad = Math.asin(Math.max(-1, Math.min(1, forwardUpComponent)));
-
-    let forwardHorizontal = [
-      newForward[0] - forwardUpComponent * worldUp[0],
-      newForward[1] - forwardUpComponent * worldUp[1],
-      newForward[2] - forwardUpComponent * worldUp[2],
-    ];
-    const forwardHorizontalLen = Math.hypot(forwardHorizontal[0], forwardHorizontal[1], forwardHorizontal[2]);
-    if (forwardHorizontalLen < 1e-6) {
+    const horizontalLen = Math.hypot(horizontal[0], horizontal[1], horizontal[2]);
+    if (horizontalLen < 1e-6) {
       const fallbackRight = normalize(cross(worldUp, [1, 0, 0]), [1, 0, 0]);
-      forwardHorizontal = normalize(cross(fallbackRight, worldUp), [0, 0, 1]);
+      horizontal = normalize(cross(fallbackRight, worldUp), [0, 0, 1]);
     } else {
-      forwardHorizontal = normalize(forwardHorizontal);
+      horizontal = normalize(horizontal);
     }
 
-    camera.position = newCameraPos;
+    // dPitch 为正 = 相机绕到支点上方俯视（几何仰角减小），与原有拖拽手感一致
+    const nextElevation = Math.max(-PITCH_LIMIT_RAD, Math.min(PITCH_LIMIT_RAD, elevation - dPitch));
+    const nextHorizontal = Math.abs(dYaw) > 1e-6
+      ? normalize(rotateAroundAxis(horizontal, worldUp, dYaw))
+      : horizontal;
+
+    const cosElevation = Math.cos(nextElevation);
+    const sinElevation = Math.sin(nextElevation);
+    const newForward = normalize([
+      nextHorizontal[0] * cosElevation + worldUp[0] * sinElevation,
+      nextHorizontal[1] * cosElevation + worldUp[1] * sinElevation,
+      nextHorizontal[2] * cosElevation + worldUp[2] * sinElevation,
+    ]);
+
+    camera.position = [
+      pivot[0] - newForward[0] * orbitRadius,
+      pivot[1] - newForward[1] * orbitRadius,
+      pivot[2] - newForward[2] * orbitRadius,
+    ];
     camera.yawRad = 0;
-    camera.pitchRad = pitchRad;
-    camera.forwardHorizontalRef = forwardHorizontal;
+    camera.pitchRad = nextElevation; // 已在 ±PITCH_LIMIT_RAD 内，setter 的 clamp 不会改动它
+    camera.forwardHorizontalRef = nextHorizontal;
     camera.worldUp = worldUp;
 
     distanceRef.current = orbitRadius;
