@@ -68,7 +68,7 @@ function createWorker(self) {
       for (let i = 0; i < vertexCount; i++) depthIndex[i] = i;
       lastProj = viewProj;
       const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
-      self.postMessage({ depthIndex, viewProj, vertexCount, sortMs }, [depthIndex.buffer]);
+      self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime }, [depthIndex.buffer]);
       return;
     }
 
@@ -106,7 +106,9 @@ function createWorker(self) {
     if (enableDebugLogs) {
       console.log('[depthWorker] 排序完成，发送结果:', { sortStrategy, vertexCount, depthIndexLength: depthIndex.length, sortMs });
     }
-    self.postMessage({ depthIndex, viewProj, vertexCount, sortMs }, [depthIndex.buffer]);
+    // 回传本次排序所用的 4D time：主线程据此让 shader 渲染「与当前深度顺序对应的那一刻时间」，
+    // 使异步排序的延迟只体现为动画整体略晚，而深度顺序始终与所显示的几何一致。
+    self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime }, [depthIndex.buffer]);
   }
 
   // —— 排序调度：seq + 「泵」+ MessageChannel 立即宏任务 ——
