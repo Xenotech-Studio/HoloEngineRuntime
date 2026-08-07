@@ -12,7 +12,6 @@ function createWorker(self) {
   let viewProj;
   let vertexCount;
   let lastVertexCount = 0;
-  let sortRunning = false;
   let sortStrategy = 'back-to-front';
   let lastSortStrategy = 'back-to-front';
   let enableDebugLogs = false;
@@ -29,28 +28,13 @@ function createWorker(self) {
 
   let lastSortedTime = NaN;
 
-  function runSort(viewProj, forceSort = false) {
+  function runSort(viewProj) {
     if (!positions) return;
     if (!viewProj) return;
     const sortStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const strategyChanged = lastSortStrategy !== sortStrategy;
-    // E5: motion-evolved sort 下 evolved 位置每帧都不同 (time 变 → motion poly 评估变),
-    // 即便 view 完全静止也必须 re-sort. 不走 skip 路径.
-    const motionAnimating = useMotionEvolvedSort && motion && hasMotion;
-    const timeChanged = motionAnimating && lastSortedTime !== currentTime;
-    if (!forceSort && !strategyChanged && !timeChanged && !motionAnimating && lastVertexCount === vertexCount && lastProj) {
-      let dist = Math.hypot(...[2, 6, 10].map((k) => lastProj[k] - viewProj[k]));
-      if (dist < 0.01) {
-        if (enableDebugLogs) console.log('[depthWorker] 跳过排序：view矩阵变化太小且策略 / 时间未改变');
-        return;
-      }
-    } else {
-      if (strategyChanged || forceSort) {
-        if (enableDebugLogs) console.log('[depthWorker] 排序策略改变或强制排序，重新排序:', lastSortStrategy, '->', sortStrategy, 'forceSort:', forceSort);
-        lastSortStrategy = sortStrategy;
-      }
-      if (lastVertexCount !== vertexCount) lastVertexCount = vertexCount;
-    }
+    // 是否需要排序完全由外层 seq/pump 决定（见 self.onmessage 与 pump）：只有 view 的深度投影行
+    // (viewProj[2/6/10]) 变化、或带 motion 时 time 变化、或排序策略 / motion 模式切换，才会推进 viewSeq
+    // 从而触发排序。因此这里不再自行判 skip —— 被调用即执行一次真实排序（静止/暂停场景根本不会进入此函数）。
 
     let maxDepth = -Infinity;
     let minDepth = Infinity;
@@ -125,17 +109,41 @@ function createWorker(self) {
     self.postMessage({ depthIndex, viewProj, vertexCount, sortMs }, [depthIndex.buffer]);
   }
 
-  const throttledSort = () => {
-    if (!sortRunning && viewProj && positions) {
-      sortRunning = true;
-      let lastView = viewProj;
-      runSort(lastView);
-      setTimeout(() => {
-        sortRunning = false;
-        if (lastView !== viewProj && viewProj && positions) throttledSort();
-      }, 0);
-    }
-  };
+  // —— 排序调度：seq + 「泵」+ MessageChannel 立即宏任务 ——
+  // viewSeq 只在「排序相关输入」真正变化时推进；sortedSeq 记录已排到哪个 seq。
+  // pump() 同步排一次「当前最新」视图，然后把继续排序的机会让回事件循环——但用 MessageChannel 的
+  // 宏任务（不被浏览器钳到 ~4ms 的 setTimeout(0)）。让出期间 worker 仍会处理主线程新来的 {view,time}
+  // 消息（它们也是宏任务，会与泵交错执行），所以：不忙等、不饿死消息队列，运动时排序几乎背靠背、延迟更低。
+  let viewSeq = 0;
+  let sortedSeq = -1;
+  let pumpScheduled = false;
+
+  function pump() {
+    pumpScheduled = false;
+    if (!viewProj || !positions) return;
+    if (sortedSeq === viewSeq) return;          // 无更新输入 → 不空转（静止 / 暂停场景直接跳过）
+    const seq = viewSeq;
+    runSort(viewProj);                          // 同步排序当前最新视图
+    sortedSeq = seq;
+    if (viewSeq !== sortedSeq) schedulePump();  // 让出期间又有更新 → 继续泵，保证收敛到最新
+  }
+
+  let schedulePump;
+  if (typeof MessageChannel !== 'undefined') {
+    const pumpChan = new MessageChannel();
+    pumpChan.port1.onmessage = pump;            // 赋值 onmessage 即隐式 start 端口
+    schedulePump = () => { if (!pumpScheduled) { pumpScheduled = true; pumpChan.port2.postMessage(0); } };
+  } else {
+    // 兜底：无 MessageChannel 时退回 setTimeout(0)
+    schedulePump = () => { if (!pumpScheduled) { pumpScheduled = true; setTimeout(pump, 0); } };
+  }
+
+  // viewProj[2/6/10] 是唯一影响深度排序的行（depth = vp[2]x + vp[6]y + vp[10]z），只比这三个分量即可。
+  function depthRowChanged(a, b) {
+    if (!a || !b) return true;
+    const dx = a[2] - b[2], dy = a[6] - b[6], dz = a[10] - b[10];
+    return (dx * dx + dy * dy + dz * dz) >= 0.0001;  // 与旧 skip 的 hypot < 0.01 同阈值
+  }
 
   self.onmessage = (e) => {
     if (e.data.texture) {
@@ -185,37 +193,32 @@ function createWorker(self) {
       enableDebugLogs = e.data.enableDebugLogs === true;
     } else if (e.data.sortStrategy) {
       const newStrategy = e.data.sortStrategy || 'back-to-front';
-      const strategyChanged = sortStrategy !== newStrategy;
-      if (enableDebugLogs) console.log('[depthWorker] 收到排序策略更新:', newStrategy, '当前:', sortStrategy, '改变:', strategyChanged);
-      const oldStrategy = sortStrategy;
-      sortStrategy = newStrategy;
-      if (viewProj && positions) {
-        if (enableDebugLogs) console.log('[depthWorker] 立即触发重新排序');
-        if (!sortRunning) {
-          sortRunning = true;
-          lastSortStrategy = oldStrategy;
-          runSort(viewProj, true);
-          setTimeout(() => { sortRunning = false; }, 0);
-        } else {
-          lastSortStrategy = oldStrategy;
-        }
-      } else {
-        lastSortStrategy = oldStrategy;
+      if (sortStrategy !== newStrategy) {
+        sortStrategy = newStrategy;
+        viewSeq++;                                 // 策略变（前后 / 后前）→ 强制重排
+        if (viewProj && positions) schedulePump();
       }
     } else if (e.data.view) {
-      viewProj = e.data.view;
-      // E5: 每帧的 time 跟着 view 一起送过来。motion-evolved sort 需要 it.
-      if (typeof e.data.time === 'number' && Number.isFinite(e.data.time)) {
-        currentTime = e.data.time;
-      }
-      throttledSort();
+      // E5: 每帧的 time 跟着 view 一起送过来；motion-evolved sort 需要它。
+      const v = e.data.view;
+      const t = (typeof e.data.time === 'number' && Number.isFinite(e.data.time)) ? e.data.time : currentTime;
+      const timeMatters = useMotionEvolvedSort && hasMotion;   // 3DGS / 非 motion-evolved 时 time 不影响排序
+      const changed = depthRowChanged(v, viewProj) || (timeMatters && t !== currentTime);
+      viewProj = v;
+      currentTime = t;
+      if (changed) { viewSeq++; schedulePump(); }  // 静止（view 深度行 + time 均未变）→ 不推进 → pump 跳过，不空转
     } else if (typeof e.data.time === 'number' && Number.isFinite(e.data.time)) {
-      // 单独的 time 更新 (eg setTime 但 view 不变): 重新触发 sort 因 evolved positions 变化
+      // 单独的 time 更新（如 __holoDebug.setTime，view 不变）：仅在带 motion 时才影响排序
+      const timeMatters = useMotionEvolvedSort && hasMotion;
+      const changed = timeMatters && e.data.time !== currentTime;
       currentTime = e.data.time;
-      if (viewProj) throttledSort();
+      if (changed && viewProj) { viewSeq++; schedulePump(); }
     } else if (typeof e.data.useMotionEvolvedSort === 'boolean') {
-      useMotionEvolvedSort = e.data.useMotionEvolvedSort;
-      if (viewProj && positions) throttledSort();
+      if (useMotionEvolvedSort !== e.data.useMotionEvolvedSort) {
+        useMotionEvolvedSort = e.data.useMotionEvolvedSort;
+        viewSeq++;                                 // motion 排序模式切换 → 强制重排
+        if (viewProj && positions) schedulePump();
+      }
     }
   };
 }
