@@ -45,6 +45,14 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
+    // 上传完成后把 depthIndex 的 ArrayBuffer transfer 回 worker 复用（消除每帧 ~N*4B 的主线程垃圾 → GC 抖动）。
+    // gl.bufferData 已同步把数据拷进 GPU，此处 detach 安全；transfer 后本线程不得再碰 depthIndex（已 detach）。
+    try {
+      const buf = depthIndex.buffer;
+      if (buf && buf.byteLength > 0 && e.target && typeof e.target.postMessage === 'function') {
+        e.target.postMessage({ returnedDepthBuffer: buf }, [buf]);
+      }
+    } catch { /* 回收失败无妨，退化为每帧新分配 */ }
     if (targetObject) {
       targetObject.vertexCount = vertexCount;
       if (!firstDepthSortReceived) targetObject.ready = true;

@@ -28,6 +28,25 @@ function createWorker(self) {
 
   let lastSortedTime = NaN;
 
+  // —— 分配复用池：消除每帧排序的数组分配（长时间运动 / 拖拽时的 GC 抖动 → 越来越卡的根因）——
+  // scratch* 仅在单次排序内用作暂存，跨帧复用；内容每次被完整覆写（counts0 是累加器，需先清零）。
+  let scratchSizeList = null;   // Int32Array(vertexCount)
+  let scratchN = 0;
+  let scratchCounts0 = null;    // Uint32Array(65536)
+  let scratchStarts0 = null;    // Uint32Array(65536)
+  // depthIndex 结果 buffer 复用：主线程上传到 GPU 后把 ArrayBuffer transfer 回来，收进这里下次复用。
+  // 正常在途最多 1~2 个；上限做个兜底防止意外无界增长。
+  const freeDepthBuffers = [];
+  function acquireDepthIndex(n) {
+    const needBytes = n * 4;
+    while (freeDepthBuffers.length) {
+      const buf = freeDepthBuffers.pop();
+      if (buf.byteLength === needBytes) return new Uint32Array(buf);  // 尺寸符 → 复用（内容随后被完整覆写）
+      // 尺寸不符（换了模型 → vertexCount 变）→ 丢弃让 GC 回收
+    }
+    return new Uint32Array(n);
+  }
+
   function runSort(viewProj) {
     if (!positions) return;
     if (!viewProj) return;
@@ -38,7 +57,9 @@ function createWorker(self) {
 
     let maxDepth = -Infinity;
     let minDepth = Infinity;
-    let sizeList = new Int32Array(vertexCount);
+    // 复用暂存（内容随后被完整覆写，无需清零）；仅在 vertexCount 变化时重建。
+    if (!scratchSizeList || scratchN !== vertexCount) { scratchSizeList = new Int32Array(vertexCount); scratchN = vertexCount; }
+    const sizeList = scratchSizeList;
     // 注意: 这里不要再声明 hasMotion 同名 const, 会跟外层 hasMotion 撞 TDZ -> 整个
     // runSort 抛 ReferenceError -> worker 永远不出 depthIndex -> 黑屏.
     const applyMotion = useMotionEvolvedSort && motion && trbfCenter;
@@ -64,7 +85,7 @@ function createWorker(self) {
     }
 
     if (sortStrategy === 'none') {
-      let depthIndex = new Uint32Array(vertexCount);
+      const depthIndex = acquireDepthIndex(vertexCount);
       for (let i = 0; i < vertexCount; i++) depthIndex[i] = i;
       lastProj = viewProj;
       const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
@@ -73,13 +94,19 @@ function createWorker(self) {
     }
 
     let depthInv = (256 * 256) / (maxDepth - minDepth);
-    let counts0 = new Uint32Array(256 * 256);
+    // counts0 是累加器 → 复用前必须清零；starts0 下面被两分支之一完整覆写 → 复用不必清零。
+    if (!scratchCounts0) scratchCounts0 = new Uint32Array(256 * 256); else scratchCounts0.fill(0);
+    const counts0 = scratchCounts0;
     for (let i = 0; i < vertexCount; i++) {
-      sizeList[i] = ((sizeList[i] - minDepth) * depthInv) | 0;
+      // 桶下标必须落在 [0, 65535]。最远点 depth==maxDepth 时原式得 65536（越界 → counts0/starts0
+      // 越界读写被静默忽略 → 该点漏计漏放 → total<vertexCount → 复用的 depthIndex 末尾留旧值 → 最近端
+      // 渲染出错帧的残留点）。故 clamp 到 65535；同时 clamp 下界 0 防浮点误差致 depth<minDepth 出负下标。
+      sizeList[i] = Math.max(0, Math.min(65535, ((sizeList[i] - minDepth) * depthInv) | 0));
       counts0[sizeList[i]]++;
     }
 
-    let starts0 = new Uint32Array(256 * 256);
+    if (!scratchStarts0) scratchStarts0 = new Uint32Array(256 * 256);
+    const starts0 = scratchStarts0;
     let total = 0;
     if (sortStrategy === 'front-to-back') {
       for (let i = 0; i < 256 * 256; i++) {
@@ -93,7 +120,7 @@ function createWorker(self) {
       }
     }
 
-    let depthIndex = new Uint32Array(vertexCount);
+    const depthIndex = acquireDepthIndex(vertexCount);
     for (let i = 0; i < vertexCount; i++) {
       const depthBucket = sizeList[i];
       depthIndex[starts0[depthBucket]++] = i;
@@ -148,6 +175,13 @@ function createWorker(self) {
   }
 
   self.onmessage = (e) => {
+    if (e.data.returnedDepthBuffer) {
+      // 主线程上传完 depthIndex 后 transfer 回来的 ArrayBuffer：收进空闲池下次复用（消除每帧结果分配）。
+      // 只 push 不立即用 —— 排序是同步的，不会与在途 buffer 冲突；上限兜底防意外无界增长。
+      freeDepthBuffers.push(e.data.returnedDepthBuffer);
+      if (freeDepthBuffers.length > 4) freeDepthBuffers.shift();
+      return;
+    }
     if (e.data.texture) {
       let texture = e.data.texture;
       // lite: 16 u32/gauss; hp_scale_rot: 32 u32/gauss. xyz 始终位于每个 gauss 的前 3 个 fp32（u32[0..2]）。
