@@ -145,11 +145,16 @@ export function useWebGL(canvasRef, options = {}) {
         viewport: glContext.getUniformLocation(shaderProgramPointCloud, 'viewport'),
         pointSize: glContext.getUniformLocation(shaderProgramPointCloud, 'pointSize'),
         alpha: glContext.getUniformLocation(shaderProgramPointCloud, 'alpha'),
+        // colmap4d 4D time gating
+        timeEnabled: glContext.getUniformLocation(shaderProgramPointCloud, 'timeEnabled'),
+        currentTime: glContext.getUniformLocation(shaderProgramPointCloud, 'currentTime'),
+        sigmaT: glContext.getUniformLocation(shaderProgramPointCloud, 'sigmaT'),
       };
       pointCloudAttributesRef.current = {
         position: glContext.getAttribLocation(shaderProgramPointCloud, 'position'),
         instancePos: glContext.getAttribLocation(shaderProgramPointCloud, 'instancePos'),
         instanceColor: glContext.getAttribLocation(shaderProgramPointCloud, 'instanceColor'),
+        instanceTime: glContext.getAttribLocation(shaderProgramPointCloud, 'instanceTime'),
       };
 
       const lnVs = createShader(glContext, glContext.VERTEX_SHADER, linesVertexShaderSource);

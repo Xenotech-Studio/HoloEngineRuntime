@@ -13,9 +13,15 @@ uniform mat4 model;
 uniform vec2 viewport;
 uniform float pointSize;
 
+// colmap4d 4D time gating (all default to the disabled/identity case)
+uniform float timeEnabled;   // 0.0 = disabled (bit-identical to the pre-4D path)
+uniform float currentTime;   // scrubber time, relative seconds
+uniform float sigmaT;        // half-window, relative seconds (hard cutoff in B2)
+
 in vec2 position;
 in vec3 instancePos;
 in vec3 instanceColor;
+in float instanceTime;       // relative seconds; < 0.0 = temporally-unbounded (always shown)
 
 out vec3 vColor;
 
@@ -29,6 +35,15 @@ void main() {
   vec2 offset = (position.xy * 0.5) * halfSize;
   gl_Position = vec4(ndc + offset, depthNDC, 1.0);
   vColor = instanceColor;
+
+  // Hard time window: relative seconds are >= 0 by construction (t - t0); a negative
+  // instanceTime marks a temporally-unbounded point that is never gated. Out-of-window
+  // points are pushed outside the NDC clip box (never w = 0, which is undefined).
+  if (timeEnabled > 0.5 && instanceTime >= 0.0) {
+    if (abs(instanceTime - currentTime) > sigmaT) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
+  }
 }
 `;
 

@@ -78,6 +78,12 @@ export class RenderableObject {
     this.pointCount = 0;
     this.pointSize = 2.0;             // 点尺寸（像素），对象内部参数
 
+    // colmap4d 4D 点云时间通道（GPU 侧时间过滤，可选）
+    this.pointTimeBuffer = null;      // WebGLBuffer (N × 1 float, 相对秒；<0 = 时间无界/恒显)
+    this.timeEnabled = false;         // 是否启用 GPU 时间门控（false = 零回归，与旧行为一致）
+    this.timeCurrent = 0.0;           // 当前时间（相对秒），host 每帧更新
+    this.timeSigma = 0.0;             // 时间半窗（相对秒）：|t - current| > sigma 的点被裁掉
+
     // 通用资源
     this.modelMatrix = null;       // 4x4 模型变换矩阵（如果为 null 则使用单位矩阵）
     this.ready = false;            // 是否准备好渲染
@@ -1395,6 +1401,7 @@ export class HoloRP {
     const aPosition = attrs.position;
     const aInstancePos = attrs.instancePos;
     const aInstanceColor = attrs.instanceColor;
+    const aInstanceTime = attrs.instanceTime;
     const quadBuf = this.vertexBuffer;
     if (!quadBuf || aPosition < 0 || aInstancePos < 0 || aInstanceColor < 0) return;
 
@@ -1402,6 +1409,35 @@ export class HoloRP {
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
     gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(aPosition, 0);
+
+    // colmap4d 4D time gating (per object). timeEnabled uniform is ALWAYS set (uniforms
+    // persist across objects sharing the program), so an ungated object forces it to 0 =>
+    // bit-identical to the pre-4D path. The instanceTime attribute is bound only when gating.
+    const setTimeUniforms = (obj) => {
+      const timeOn = !!(obj.timeEnabled && obj.pointTimeBuffer && aInstanceTime >= 0);
+      if (uniforms.timeEnabled !== undefined && uniforms.timeEnabled !== null) {
+        gl.uniform1f(uniforms.timeEnabled, timeOn ? 1.0 : 0.0);
+      }
+      if (timeOn) {
+        if (uniforms.currentTime !== undefined && uniforms.currentTime !== null) {
+          gl.uniform1f(uniforms.currentTime, typeof obj.timeCurrent === 'number' ? obj.timeCurrent : 0.0);
+        }
+        if (uniforms.sigmaT !== undefined && uniforms.sigmaT !== null) {
+          gl.uniform1f(uniforms.sigmaT, typeof obj.timeSigma === 'number' ? obj.timeSigma : 0.0);
+        }
+        gl.enableVertexAttribArray(aInstanceTime);
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointTimeBuffer);
+        gl.vertexAttribPointer(aInstanceTime, 1, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(aInstanceTime, 1);
+      }
+      return timeOn;
+    };
+    const clearTimeAttrib = (timeOn) => {
+      if (timeOn && aInstanceTime >= 0) {
+        gl.vertexAttribDivisor(aInstanceTime, 0);
+        gl.disableVertexAttribArray(aInstanceTime);
+      }
+    };
 
     // 分离半透明和不透明的点云对象，确保正确的渲染顺序
     const opaqueObjects = [];
@@ -1442,6 +1478,8 @@ export class HoloRP {
           gl.uniform1f(uniforms.alpha, alpha);
         }
 
+        const timeOn = setTimeUniforms(obj);
+
         gl.enableVertexAttribArray(aInstancePos);
         gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
         gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
@@ -1458,6 +1496,7 @@ export class HoloRP {
         gl.vertexAttribDivisor(aInstanceColor, 0);
         gl.disableVertexAttribArray(aInstancePos);
         gl.disableVertexAttribArray(aInstanceColor);
+        clearTimeAttrib(timeOn);
       }
     }
 
@@ -1481,6 +1520,8 @@ export class HoloRP {
           gl.uniform1f(uniforms.alpha, alpha);
         }
 
+        const timeOn = setTimeUniforms(obj);
+
         gl.enableVertexAttribArray(aInstancePos);
         gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointPositionBuffer);
         gl.vertexAttribPointer(aInstancePos, 3, gl.FLOAT, false, 0, 0);
@@ -1497,6 +1538,7 @@ export class HoloRP {
         gl.vertexAttribDivisor(aInstanceColor, 0);
         gl.disableVertexAttribArray(aInstancePos);
         gl.disableVertexAttribArray(aInstanceColor);
+        clearTimeAttrib(timeOn);
       }
     }
 
