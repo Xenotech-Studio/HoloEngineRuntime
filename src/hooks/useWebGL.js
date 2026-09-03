@@ -149,6 +149,7 @@ export function useWebGL(canvasRef, options = {}) {
         timeEnabled: glContext.getUniformLocation(shaderProgramPointCloud, 'timeEnabled'),
         currentTime: glContext.getUniformLocation(shaderProgramPointCloud, 'currentTime'),
         sigmaT: glContext.getUniformLocation(shaderProgramPointCloud, 'sigmaT'),
+        sigmaSoft: glContext.getUniformLocation(shaderProgramPointCloud, 'sigmaSoft'),
       };
       pointCloudAttributesRef.current = {
         position: glContext.getAttribLocation(shaderProgramPointCloud, 'position'),

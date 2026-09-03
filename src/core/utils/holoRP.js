@@ -82,7 +82,8 @@ export class RenderableObject {
     this.pointTimeBuffer = null;      // WebGLBuffer (N × 1 float, 相对秒；<0 = 时间无界/恒显)
     this.timeEnabled = false;         // 是否启用 GPU 时间门控（false = 零回归，与旧行为一致）
     this.timeCurrent = 0.0;           // 当前时间（相对秒），host 每帧更新
-    this.timeSigma = 0.0;             // 时间半窗（相对秒）：|t - current| > sigma 的点被裁掉
+    this.timeSigma = 0.0;             // 时间半窗（相对秒）：|t - current| <= sigma 内全显
+    this.timeSoftSigma = 0.0;         // B3 软化带宽（相对秒）：[sigma, sigma+soft] 内点尺寸线性收缩至 0
 
     // 通用资源
     this.modelMatrix = null;       // 4x4 模型变换矩阵（如果为 null 则使用单位矩阵）
@@ -1424,6 +1425,9 @@ export class HoloRP {
         }
         if (uniforms.sigmaT !== undefined && uniforms.sigmaT !== null) {
           gl.uniform1f(uniforms.sigmaT, typeof obj.timeSigma === 'number' ? obj.timeSigma : 0.0);
+        }
+        if (uniforms.sigmaSoft !== undefined && uniforms.sigmaSoft !== null) {
+          gl.uniform1f(uniforms.sigmaSoft, typeof obj.timeSoftSigma === 'number' ? obj.timeSoftSigma : 0.0);
         }
         gl.enableVertexAttribArray(aInstanceTime);
         gl.bindBuffer(gl.ARRAY_BUFFER, obj.pointTimeBuffer);

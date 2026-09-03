@@ -16,7 +16,8 @@ uniform float pointSize;
 // colmap4d 4D time gating (all default to the disabled/identity case)
 uniform float timeEnabled;   // 0.0 = disabled (bit-identical to the pre-4D path)
 uniform float currentTime;   // scrubber time, relative seconds
-uniform float sigmaT;        // half-window, relative seconds (hard cutoff in B2)
+uniform float sigmaT;        // half-window (fully shown), relative seconds
+uniform float sigmaSoft;     // B3 softening band width beyond sigmaT (0 = hard cutoff = B2)
 
 in vec2 position;
 in vec3 instancePos;
@@ -30,20 +31,29 @@ void main() {
   vec4 clip = projection * view * world;
   vec2 ndc = clip.xy / clip.w;
   float depthNDC = clip.z / clip.w;
-
-  vec2 halfSize = vec2(pointSize, pointSize) / viewport;
-  vec2 offset = (position.xy * 0.5) * halfSize;
-  gl_Position = vec4(ndc + offset, depthNDC, 1.0);
   vColor = instanceColor;
 
-  // Hard time window: relative seconds are >= 0 by construction (t - t0); a negative
-  // instanceTime marks a temporally-unbounded point that is never gated. Out-of-window
-  // points are pushed outside the NDC clip box (never w = 0, which is undefined).
+  // colmap4d time gating. Relative seconds are >= 0 by construction (t - t0); a negative
+  // instanceTime marks a temporally-unbounded point that is never gated. Instead of fading
+  // alpha (which would force blending + depth sorting), out-of-window points shrink their
+  // quad to nothing in the soft band [sigmaT, sigmaT+sigmaSoft] and beyond that are pushed
+  // outside the NDC clip box (never w = 0). timeEnabled=0 or sigmaSoft=0 keeps prior behavior.
+  float sizeScale = 1.0;
   if (timeEnabled > 0.5 && instanceTime >= 0.0) {
-    if (abs(instanceTime - currentTime) > sigmaT) {
+    float d = abs(instanceTime - currentTime);
+    float outer = sigmaT + sigmaSoft;
+    if (d > outer) {
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      return;
+    }
+    if (sigmaSoft > 0.0 && d > sigmaT) {
+      sizeScale = clamp((outer - d) / sigmaSoft, 0.0, 1.0);
     }
   }
+
+  vec2 halfSize = vec2(pointSize, pointSize) / viewport;
+  vec2 offset = (position.xy * 0.5) * halfSize * sizeScale;
+  gl_Position = vec4(ndc + offset, depthNDC, 1.0);
 }
 `;
 
