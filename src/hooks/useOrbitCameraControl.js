@@ -852,5 +852,8 @@ export function useOrbitCameraControl(
     // 拖拽检测 API
     hasDragged: hasDraggedRef, // ref，外部可以通过 .current 访问，表示是否已经发生了拖拽
     getMouseDownPos: () => mouseDownPosRef.current, // 获取鼠标按下位置
+    // 视角保存/恢复 API（供外部序列化 orbit 状态）
+    orbitTargetRef: targetRef,
+    orbitDistanceRef: distanceRef,
   };
 }
