@@ -855,5 +855,6 @@ export function useOrbitCameraControl(
     // 视角保存/恢复 API（供外部序列化 orbit 状态）
     orbitTargetRef: targetRef,
     orbitDistanceRef: distanceRef,
+    orbitTargetDistanceRef: targetDistanceRef,
   };
 }

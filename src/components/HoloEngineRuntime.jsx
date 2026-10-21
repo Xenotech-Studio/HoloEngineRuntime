@@ -331,6 +331,7 @@ export default function HoloEngineRuntime({
       cameraRef,
       orbitTargetRef: orbitControls.orbitTargetRef,
       orbitDistanceRef: orbitControls.orbitDistanceRef,
+      orbitTargetDistanceRef: orbitControls.orbitTargetDistanceRef,
     });
   }, [onCameraStateReady, orbitControls.orbitTargetRef, orbitControls.orbitDistanceRef]);
 
