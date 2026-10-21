@@ -632,7 +632,10 @@ export default function HoloEngineRuntime({
                 const viewProj = activeCamera.getViewProjModelMatrix(currentModelMatrix);
                 
                 if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16 && obj.worker) {
-                  obj.worker.postMessage({ view: viewProj });
+                  obj.worker.postMessage({
+                    view: viewProj,
+                    time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
+                  });
                 }
               }
               
@@ -693,7 +696,10 @@ export default function HoloEngineRuntime({
               
               const modelMatrix = obj.getModelMatrix(createTransformMatrix);
               const viewProj = activeCamera.getViewProjModelMatrix(modelMatrix);
-              worker.postMessage({ view: viewProj });
+              worker.postMessage({
+                view: viewProj,
+                time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
+              });
               
               // Worker的第一次深度排序完成后会通过onmessage回调标记为就绪
               // 这里不立即检查，等待Worker返回第一次深度排序结果
@@ -774,10 +780,10 @@ export default function HoloEngineRuntime({
     pipeline.render(
       renderTargetRef.current,
       null, // 渲染前回调（已在上面更新）
-      (objId, worker, viewProj) => {
+      (objId, worker, viewProj, time) => {
         // 更新 Worker（用于深度排序）
         if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
-          worker.postMessage({ view: viewProj });
+          worker.postMessage({ view: viewProj, time });
         }
       },
       null, // XR frame（非XR模式）

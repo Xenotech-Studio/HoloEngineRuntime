@@ -950,7 +950,15 @@ export class HoloRP {
           obj._lastSentSortStrategy = sortStrategy;
         }
         // 然后更新view矩阵
-        onUpdateWorker(obj.id, obj.worker, viewProj);
+        // A moving 4DGS must sort with the same time value as the shader.
+        // Passing it through the render callback also lets the worker avoid
+        // scheduling a new sort while both the view and manual time are still.
+        onUpdateWorker(
+          obj.id,
+          obj.worker,
+          viewProj,
+          is4DGS ? this._resolveFourDGaussianTimeUniform() : null,
+        );
       }
     }
     
@@ -1586,6 +1594,5 @@ export class HoloRP {
     this.clearObjects();
   }
 }
-
 
 
