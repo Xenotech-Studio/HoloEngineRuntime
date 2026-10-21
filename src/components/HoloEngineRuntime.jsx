@@ -37,7 +37,9 @@ export default function HoloEngineRuntime({
   depthRangeNear = 10.0, // 近处深度范围（米），用于调整颜色渐变的起始距离
   depthGamma = 1.5, // Gamma 值，用于调整映射曲线的非线性程度
   depthOpacityThreshold = 0.13, // 深度写入的像素不透明度阈值（0.0-1.0）
-  centerOpacityThreshold = 0.65 // 深度写入的中心点不透明度阈值（0.0-1.0）
+  centerOpacityThreshold = 0.65, // 深度写入的中心点不透明度阈值（0.0-1.0）
+  // ``null`` keeps HoloRP's built-in animation; [0, 1] pins 4DGS time.
+  fourDGaussianTime = null
 }) {
   // 移除调试日志 - 功能已正常工作
   
@@ -141,6 +143,18 @@ export default function HoloEngineRuntime({
       renderPipelineRef.current.setCenterOpacityThreshold(centerOpacityThreshold);
     }
   }, [centerOpacityThreshold]);
+
+  // The core renderer already owns the time uniform and its automatic
+  // animation. This prop merely exposes its documented manual override to
+  // embedding applications such as the SplaTV viewer.
+  useEffect(() => {
+    if (renderPipelineRef.current) {
+      renderPipelineRef.current.fourDGaussianTimeUser =
+        typeof fourDGaussianTime === 'number' && Number.isFinite(fourDGaussianTime)
+          ? Math.min(1, Math.max(0, fourDGaussianTime))
+          : null;
+    }
+  }, [fourDGaussianTime]);
 
   // 获取默认相机（使用 Camera 类）
   const getDefaultCamera = useCallback(() => {
@@ -805,4 +819,3 @@ export default function HoloEngineRuntime({
 
   return null;
 }
-
