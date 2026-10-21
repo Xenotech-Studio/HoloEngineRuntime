@@ -25,6 +25,7 @@ export default function HoloEngineRuntime({
   skipFileCameraInit = true,
   onViewMatrixRefReady = null,
   onCameraRefReady = null,
+  onCameraStateReady = null,
   disableLeftMouseButton = false,
   sceneVersion = 0, // 场景版本号，用于触发重新加载
   targetVerticalFOV = null, // 目标垂直 FOV（角度），如果提供则根据 canvas 高度动态计算 fy
@@ -319,6 +320,19 @@ export default function HoloEngineRuntime({
   );
   
   const { updateCameraFromInput } = isOrbitMode ? orbitControls : fpsControls;
+
+  // Embedders that need to persist a portable orbit view receive refs rather
+  // than a second camera implementation.  The refs remain owned by the
+  // runtime/control hook, so applying a restored view cannot desynchronise
+  // camera, target and orbit radius.
+  useEffect(() => {
+    if (!onCameraStateReady) return;
+    onCameraStateReady({
+      cameraRef,
+      orbitTargetRef: orbitControls.orbitTargetRef,
+      orbitDistanceRef: orbitControls.orbitDistanceRef,
+    });
+  }, [onCameraStateReady, orbitControls.orbitTargetRef, orbitControls.orbitDistanceRef]);
 
   // 加载所有场景对象相关的 refs
   const loadingRef = useRef(new Set());
