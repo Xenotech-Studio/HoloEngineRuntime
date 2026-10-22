@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useWebGL } from '../hooks/useWebGL';
 import { useSplatLoader } from '../hooks/useSplatLoader';
 import { useFpsCameraControl } from '../hooks/useFpsCameraControl';
@@ -49,6 +49,9 @@ export default function HoloEngineRuntime({
   const animationFrameRef = useRef(null);
   const renderPipelineRef = useRef(null);
   const renderTargetRef = useRef(null);
+  const controlledTime = typeof fourDGaussianTime === 'number' && Number.isFinite(fourDGaussianTime)
+    ? Math.min(1, Math.max(0, fourDGaussianTime))
+    : null;
   
   useEffect(() => {
     if (!gl || !program || !uniforms || !attributes || !canvasRef.current) return;
@@ -70,6 +73,10 @@ export default function HoloEngineRuntime({
       attributes, attributes3DGS, meshAttributes || attributes,
       extendedOptions
     );
+    // WebGL becomes ready AFTER mount. A time-only effect may already have
+    // run with no pipeline and will not rerun for an unchanged prop. Seed
+    // every new/recreated pipeline before exposing it to the render loop.
+    pipeline.fourDGaussianTimeUser = controlledTime;
     pipeline.initAxisGrid(initAxisGridRenderer);
     renderPipelineRef.current = pipeline;
     
@@ -147,15 +154,13 @@ export default function HoloEngineRuntime({
 
   // The core renderer already owns the time uniform and its automatic
   // animation. This prop merely exposes its documented manual override to
-  // embedding applications such as the SplaTV viewer.
-  useEffect(() => {
+  // embedding applications such as the SplaTV viewer. Update before paint
+  // so the next animation frame uses the committed slider value.
+  useLayoutEffect(() => {
     if (renderPipelineRef.current) {
-      renderPipelineRef.current.fourDGaussianTimeUser =
-        typeof fourDGaussianTime === 'number' && Number.isFinite(fourDGaussianTime)
-          ? Math.min(1, Math.max(0, fourDGaussianTime))
-          : null;
+      renderPipelineRef.current.fourDGaussianTimeUser = controlledTime;
     }
-  }, [fourDGaussianTime]);
+  }, [controlledTime]);
 
   // 获取默认相机（使用 Camera 类）
   const getDefaultCamera = useCallback(() => {
