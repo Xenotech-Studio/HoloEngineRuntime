@@ -52,6 +52,9 @@ export default function HoloEngineRuntime({
   const controlledTime = typeof fourDGaussianTime === 'number' && Number.isFinite(fourDGaussianTime)
     ? Math.min(1, Math.max(0, fourDGaussianTime))
     : null;
+  // The RAF callback is long-lived; read the latest committed prop through a
+  // ref, not a controlledTime captured when that callback was created.
+  const controlledTimeRef = useRef(controlledTime);
   
   useEffect(() => {
     if (!gl || !program || !uniforms || !attributes || !canvasRef.current) return;
@@ -157,6 +160,7 @@ export default function HoloEngineRuntime({
   // embedding applications such as the SplaTV viewer. Update before paint
   // so the next animation frame uses the committed slider value.
   useLayoutEffect(() => {
+    controlledTimeRef.current = controlledTime;
     if (renderPipelineRef.current) {
       renderPipelineRef.current.fourDGaussianTimeUser = controlledTime;
     }
@@ -780,6 +784,13 @@ export default function HoloEngineRuntime({
 
     // 更新渲染管线的视图矩阵和相机
     const pipeline = renderPipelineRef.current;
+    // Final authority for controlled playback: repair the override before
+    // every draw (and its worker sort request), even after a late pipeline
+    // recreation or another caller resetting it. null retains auto mode.
+    const frameTime = controlledTimeRef.current;
+    if (frameTime !== null && pipeline.fourDGaussianTimeUser !== frameTime) {
+      pipeline.fourDGaussianTimeUser = frameTime;
+    }
     if (cameraRef.current) {
       // 更新相机的 canvas 尺寸（如果变化）
       const canvasWidth = canvas.clientWidth || canvas.width || window.innerWidth;
