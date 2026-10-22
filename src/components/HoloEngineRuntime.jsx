@@ -40,7 +40,9 @@ export default function HoloEngineRuntime({
   depthOpacityThreshold = 0.13, // 深度写入的像素不透明度阈值（0.0-1.0）
   centerOpacityThreshold = 0.65, // 深度写入的中心点不透明度阈值（0.0-1.0）
   // ``null`` keeps HoloRP's built-in animation; [0, 1] pins 4DGS time.
-  fourDGaussianTime = null
+  fourDGaussianTime = null,
+  // Optional viewer-owned numeric ref for animation without React rerenders.
+  fourDGaussianTimeRef = null
 }) {
   // 移除调试日志 - 功能已正常工作
   
@@ -49,12 +51,14 @@ export default function HoloEngineRuntime({
   const animationFrameRef = useRef(null);
   const renderPipelineRef = useRef(null);
   const renderTargetRef = useRef(null);
-  const controlledTime = typeof fourDGaussianTime === 'number' && Number.isFinite(fourDGaussianTime)
-    ? Math.min(1, Math.max(0, fourDGaussianTime))
+  const requestedTime = fourDGaussianTimeRef?.current ?? fourDGaussianTime;
+  const controlledTime = typeof requestedTime === 'number' && Number.isFinite(requestedTime)
+    ? Math.min(1, Math.max(0, requestedTime))
     : null;
   // The RAF callback is long-lived; read the latest committed prop through a
   // ref, not a controlledTime captured when that callback was created.
   const controlledTimeRef = useRef(controlledTime);
+  const timeSourceRef = useRef(fourDGaussianTimeRef);
   
   useEffect(() => {
     if (!gl || !program || !uniforms || !attributes || !canvasRef.current) return;
@@ -161,10 +165,11 @@ export default function HoloEngineRuntime({
   // so the next animation frame uses the committed slider value.
   useLayoutEffect(() => {
     controlledTimeRef.current = controlledTime;
+    timeSourceRef.current = fourDGaussianTimeRef;
     if (renderPipelineRef.current) {
       renderPipelineRef.current.fourDGaussianTimeUser = controlledTime;
     }
-  }, [controlledTime]);
+  }, [controlledTime, fourDGaussianTimeRef]);
 
   // 获取默认相机（使用 Camera 类）
   const getDefaultCamera = useCallback(() => {
@@ -787,7 +792,9 @@ export default function HoloEngineRuntime({
     // Final authority for controlled playback: repair the override before
     // every draw (and its worker sort request), even after a late pipeline
     // recreation or another caller resetting it. null retains auto mode.
-    const frameTime = controlledTimeRef.current;
+    const sourceTime = timeSourceRef.current?.current;
+    const frameTime = typeof sourceTime === 'number' && Number.isFinite(sourceTime)
+      ? Math.min(1, Math.max(0, sourceTime)) : controlledTimeRef.current;
     if (frameTime !== null && pipeline.fourDGaussianTimeUser !== frameTime) {
       pipeline.fourDGaussianTimeUser = frameTime;
     }
