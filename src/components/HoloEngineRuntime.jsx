@@ -42,7 +42,9 @@ export default function HoloEngineRuntime({
   // ``null`` keeps HoloRP's built-in animation; [0, 1] pins 4DGS time.
   fourDGaussianTime = null,
   // Optional viewer-owned numeric ref for animation without React rerenders.
-  fourDGaussianTimeRef = null
+  fourDGaussianTimeRef = null,
+  showGrid,
+  showAxes
 }) {
   // 移除调试日志 - 功能已正常工作
   
@@ -59,6 +61,8 @@ export default function HoloEngineRuntime({
   // ref, not a controlledTime captured when that callback was created.
   const controlledTimeRef = useRef(controlledTime);
   const timeSourceRef = useRef(fourDGaussianTimeRef);
+  const helpersRef = useRef({ showGrid, showAxes });
+  useLayoutEffect(() => { helpersRef.current = { showGrid, showAxes }; }, [showGrid, showAxes]);
   
   useEffect(() => {
     if (!gl || !program || !uniforms || !attributes || !canvasRef.current) return;
@@ -793,6 +797,9 @@ export default function HoloEngineRuntime({
     // every draw (and its worker sort request), even after a late pipeline
     // recreation or another caller resetting it. null retains auto mode.
     const sourceTime = timeSourceRef.current?.current;
+    // Undefined preserves existing callers' pipeline-owned visibility settings.
+    if (typeof helpersRef.current.showGrid === 'boolean') pipeline.showGrid = helpersRef.current.showGrid;
+    if (typeof helpersRef.current.showAxes === 'boolean') pipeline.showAxes = helpersRef.current.showAxes;
     const frameTime = typeof sourceTime === 'number' && Number.isFinite(sourceTime)
       ? Math.min(1, Math.max(0, sourceTime)) : controlledTimeRef.current;
     if (frameTime !== null && pipeline.fourDGaussianTimeUser !== frameTime) {
