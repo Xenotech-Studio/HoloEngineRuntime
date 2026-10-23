@@ -46,6 +46,19 @@ export default function HoloEngineRuntime({
   showGrid,
   showAxes
 }) {
+  // Retain host zoom even if its message arrives before WebGL initialization.
+  const renderScaleRef = useRef(1);
+  useEffect(() => {
+    const onRenderScale = (event) => {
+      if (event.origin !== location.origin || event.source !== parent) return;
+      if (event.data?.type !== 'set-render-scale' || !Number.isFinite(event.data.scale)) return;
+      renderScaleRef.current = Math.max(0.25, event.data.scale);
+      renderTargetRef.current?.setRenderScale(renderScaleRef.current);
+    };
+    window.addEventListener('message', onRenderScale);
+    return () => window.removeEventListener('message', onRenderScale);
+  }, []);
+
   // 移除调试日志 - 功能已正常工作
   
   const { gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes, error: webGLError } = useWebGL(canvasRef, { antialias: false });
@@ -93,6 +106,7 @@ export default function HoloEngineRuntime({
     
     // 创建 Canvas 渲染目标
     const renderTarget = new CanvasRenderTarget(canvasRef.current, gl);
+    renderTarget.setRenderScale(renderScaleRef.current);
     renderTargetRef.current = renderTarget;
     
     return () => {

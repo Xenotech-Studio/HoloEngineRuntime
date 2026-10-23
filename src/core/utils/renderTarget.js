@@ -83,6 +83,7 @@ export class CanvasRenderTarget extends RenderTarget {
     this._viewMatrix = null;
     this._fx = 0;
     this._fy = 0;
+    this.renderScale = 1;
     this._resizeObserver = null;
     if (observeResize && typeof ResizeObserver !== 'undefined') {
       this._resizeObserver = new ResizeObserver(() => this.resize());
@@ -91,19 +92,29 @@ export class CanvasRenderTarget extends RenderTarget {
     }
   }
 
-  // Shared physical-pixel budget: DPR <= 2, edge <= 4096, area <= 4 MP.
+  // Shared policy: 3x SSAA * DPR (<= 2) * host zoom (>= 0.25).
+  // Bound each canvas to 4096 per edge / 8 MP; zoom is not a DPR cap.
   // Apply one scale to both axes so the projection retains the CSS aspect ratio.
-  static getRenderSize(width, height, pixelRatio = window.devicePixelRatio || 1) {
+  static getRenderSize(width, height, pixelRatio = window.devicePixelRatio || 1, zoom = 1) {
     if (width <= 0 || height <= 0) return { width: 0, height: 0 };
+    const dpr = Math.min(Number.isFinite(pixelRatio) && pixelRatio > 0 ? pixelRatio : 1, 2);
+    const renderZoom = Number.isFinite(zoom) ? Math.max(0.25, zoom) : 1;
     const scale = Math.min(
-      Number.isFinite(pixelRatio) && pixelRatio > 0 ? pixelRatio : 1,
-      2, 4096 / Math.max(width, height), Math.sqrt(4194304 / (width * height)),
+      3 * dpr * renderZoom, 4096 / Math.max(width, height), Math.sqrt(8388608 / (width * height)),
     );
     return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
   }
 
+  setRenderScale(zoom) {
+    if (!Number.isFinite(zoom)) return;
+    this.renderScale = Math.max(0.25, zoom);
+    this.resize();
+  }
+
   resize() {
-    const size = CanvasRenderTarget.getRenderSize(this.canvas.clientWidth, this.canvas.clientHeight);
+    const size = CanvasRenderTarget.getRenderSize(
+      this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.renderScale,
+    );
     if (!size.width || !size.height) return size;
     if (this.canvas.width !== size.width) this.canvas.width = size.width;
     if (this.canvas.height !== size.height) this.canvas.height = size.height;
