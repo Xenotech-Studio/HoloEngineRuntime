@@ -73,7 +73,7 @@ export class RenderTarget {
  * Canvas 渲染目标（普通模式）
  */
 export class CanvasRenderTarget extends RenderTarget {
-  constructor(canvas, gl) {
+  constructor(canvas, gl, { observeResize = true } = {}) {
     super();
     this.canvas = canvas;
     this.gl = gl;
@@ -83,6 +83,36 @@ export class CanvasRenderTarget extends RenderTarget {
     this._viewMatrix = null;
     this._fx = 0;
     this._fy = 0;
+    this._resizeObserver = null;
+    if (observeResize && typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => this.resize());
+      this._resizeObserver.observe(canvas);
+      if (canvas.parentElement) this._resizeObserver.observe(canvas.parentElement);
+    }
+  }
+
+  // Shared physical-pixel budget: DPR <= 2, edge <= 4096, area <= 4 MP.
+  // Apply one scale to both axes so the projection retains the CSS aspect ratio.
+  static getRenderSize(width, height, pixelRatio = window.devicePixelRatio || 1) {
+    if (width <= 0 || height <= 0) return { width: 0, height: 0 };
+    const scale = Math.min(
+      Number.isFinite(pixelRatio) && pixelRatio > 0 ? pixelRatio : 1,
+      2, 4096 / Math.max(width, height), Math.sqrt(4194304 / (width * height)),
+    );
+    return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+  }
+
+  resize() {
+    const size = CanvasRenderTarget.getRenderSize(this.canvas.clientWidth, this.canvas.clientHeight);
+    if (!size.width || !size.height) return size;
+    if (this.canvas.width !== size.width) this.canvas.width = size.width;
+    if (this.canvas.height !== size.height) this.canvas.height = size.height;
+    return size;
+  }
+
+  dispose() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
   }
 
   beginFrame() {
@@ -90,15 +120,8 @@ export class CanvasRenderTarget extends RenderTarget {
       return false;
     }
 
-    // 获取 canvas 的实际尺寸
-    const canvasWidth = this.canvas.clientWidth || this.canvas.width || window.innerWidth;
-    const canvasHeight = this.canvas.clientHeight || this.canvas.height || window.innerHeight;
-
-    // 更新 canvas 尺寸
-    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
-      this.canvas.width = canvasWidth;
-      this.canvas.height = canvasHeight;
-    }
+    // Also poll DPR: moving between monitors need not trigger ResizeObserver.
+    const { width: canvasWidth, height: canvasHeight } = this.resize();
 
     // 检查 canvas 尺寸
     if (canvasWidth === 0 || canvasHeight === 0) {
