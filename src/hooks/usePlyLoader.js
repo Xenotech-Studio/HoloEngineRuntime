@@ -156,7 +156,8 @@ function convertPlyToTextureData(vertices, header) {
     data: textureData,
     width: textureWidth,
     height: textureHeight,
-    buffer: textureData.buffer,
+    // Shared depthWorker contract: float view of the packed texture, as in SplatV.
+    buffer: floatData,
     vertices: vertices,
     sphericalHarmonicsDegree: header.sphericalHarmonicsDegree
   };

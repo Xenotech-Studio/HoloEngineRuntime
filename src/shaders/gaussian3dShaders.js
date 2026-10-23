@@ -108,7 +108,8 @@ export const vertexShader3DGSSource = `
       float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
       float depthEff = mix(1.0, depthF, scaleT);
       float aEff = mix(1.0, splat.a, scaleT);
-      vColor = depthEff * vec4(1.0, 1.0, 1.0, aEff) * vec4(splat.rgb, aEff);
+      // The fragment shader premultiplies RGB by the Gaussian alpha exactly once.
+      vColor = depthEff * vec4(splat.rgb, aEff);
 
       vec2 vCenter = vec2(pos_proj) / pos_proj.w;
       float depthNDC = pos_proj.z / pos_proj.w;

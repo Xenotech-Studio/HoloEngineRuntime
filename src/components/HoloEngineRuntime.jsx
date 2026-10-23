@@ -668,7 +668,7 @@ export default function HoloEngineRuntime({
                 
                 const projectionMatrix = activeCamera.projectionMatrix;
                 const viewMatrix = activeCamera.viewMatrix;
-                const currentModelMatrix = obj.getModelMatrix ? obj.getModelMatrix() : createTransformMatrix(obj.position, obj.rotation.map(deg => (deg * Math.PI) / 180), obj.scale);
+                const currentModelMatrix = obj.getModelMatrix ? obj.getModelMatrix(createTransformMatrix) : createTransformMatrix(obj.position, obj.rotation.map(deg => (deg * Math.PI) / 180), obj.scale);
                 const viewProj = activeCamera.getViewProjModelMatrix(currentModelMatrix);
                 
                 if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16 && obj.worker) {
