@@ -617,6 +617,13 @@ export default function HoloEngineRuntime({
                 onFirstDepthSort: (vertexCount) => {
                   workerReadyRef.current.set(obj.id, true);
                   console.log(`[HoloEngineRuntime] 3DGS Worker 第一次深度排序完成: ${obj.id.substring(0, 8)}... (${vertexCount} 顶点)`);
+                  // Like 4DGS, publish asynchronous readiness to the existing
+                  // render object; no scene/React update is required to draw it.
+                  const renderObj = renderPipelineRef.current?.getObject(obj.id);
+                  if (renderObj) {
+                    renderObj.ready = true;
+                    renderObj.vertexCount = vertexCount;
+                  }
                   checkAllLoaded();
                 },
                 onWorkerError: (err) => {
