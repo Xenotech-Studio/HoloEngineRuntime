@@ -43,17 +43,28 @@ export default function HoloEngineRuntime({
   fourDGaussianTime = null,
   // Optional viewer-owned numeric ref for animation without React rerenders.
   fourDGaussianTimeRef = null,
+  // Opt-in: existing COLMAP/editor consumers retain continuous rendering.
+  suspended = false,
+  redrawVersion = 0,
   showGrid,
   showAxes
 }) {
   // Retain host zoom even if its message arrives before WebGL initialization.
   const renderScaleRef = useRef(1);
+  const invalidateRef = useRef(() => {});
+  const suspendedRef = useRef(suspended);
+  const observedWorkersRef = useRef(new WeakSet());
+  const renderStatsRef = useRef({ version: 'focus-suspend-v1', frames: 0, sortRequests: 0, sortResults: 0, suspended });
+  useLayoutEffect(() => { suspendedRef.current = suspended; renderStatsRef.current.suspended = suspended; }, [suspended]);
   useEffect(() => {
     const onRenderScale = (event) => {
       if (event.origin !== location.origin || event.source !== parent) return;
       if (event.data?.type !== 'set-render-scale' || !Number.isFinite(event.data.scale)) return;
-      renderScaleRef.current = Math.max(0.25, event.data.scale);
+      const scale = Math.max(0.25, event.data.scale);
+      if (scale === renderScaleRef.current) return;
+      renderScaleRef.current = scale;
       renderTargetRef.current?.setRenderScale(renderScaleRef.current);
+      invalidateRef.current();
     };
     window.addEventListener('message', onRenderScale);
     return () => window.removeEventListener('message', onRenderScale);
@@ -108,6 +119,7 @@ export default function HoloEngineRuntime({
     const renderTarget = new CanvasRenderTarget(canvasRef.current, gl);
     renderTarget.setRenderScale(renderScaleRef.current);
     renderTargetRef.current = renderTarget;
+    invalidateRef.current();
     
     return () => {
       if (renderPipelineRef.current) {
@@ -352,6 +364,10 @@ export default function HoloEngineRuntime({
   );
   
   const { updateCameraFromInput } = isOrbitMode ? orbitControls : fpsControls;
+  // Input hooks close over embedder callbacks. Their identity can change on
+  // an unrelated React update; that must not restart a suspended RAF loop.
+  const cameraInputRef = useRef(updateCameraFromInput);
+  useLayoutEffect(() => { cameraInputRef.current = updateCameraFromInput; }, [updateCameraFromInput]);
 
   // Embedders that need to persist a portable orbit view receive refs rather
   // than a second camera implementation.  The refs remain owned by the
@@ -489,6 +505,7 @@ export default function HoloEngineRuntime({
     sceneObjects.forEach(sceneObj => {
       syncObjectToPipeline(sceneObj, pipeline, workerReadyRef);
     });
+    invalidateRef.current();
   }, [sceneManager, sceneVersion, syncObjectToPipeline]);
 
   // 加载所有场景对象
@@ -516,7 +533,9 @@ export default function HoloEngineRuntime({
       return true;
     });
     
-    if (noLoading && allLoaded && allWorkersReady && onLoadComplete) {
+    if (noLoading && allLoaded && allWorkersReady) {
+      invalidateRef.current();
+      if (!onLoadComplete) return;
       // 延迟一小段时间确保所有资源都已就绪
       if (loadCompleteCheckRef.current) {
         clearTimeout(loadCompleteCheckRef.current);
@@ -792,8 +811,8 @@ export default function HoloEngineRuntime({
 
   // 渲染循环
   const render = useCallback(() => {
+    animationFrameRef.current = null;
     if (!renderPipelineRef.current || !renderTargetRef.current || !sceneManager) {
-      animationFrameRef.current = requestAnimationFrame(render);
       return;
     }
     
@@ -802,15 +821,28 @@ export default function HoloEngineRuntime({
     
     const canvas = canvasRef.current;
     if (!canvas) {
-      animationFrameRef.current = requestAnimationFrame(render);
       return;
+    }
+    canvas.__holoRenderStats = renderStatsRef.current;
+    renderStatsRef.current.frames++;
+    // Sorting may finish after suspension. Upload then draw that result once;
+    // an unchanged view/time does not schedule another worker sort.
+    for (const obj of sceneManager.getAllObjects()) {
+      if (obj.worker && !observedWorkersRef.current.has(obj.worker)) {
+        observedWorkersRef.current.add(obj.worker);
+        obj.worker.addEventListener('message', event => {
+          if (!event.data.depthIndex) return;
+          renderStatsRef.current.sortResults++;
+          invalidateRef.current();
+        });
+      }
     }
 
     // 更新相机输入（业务逻辑：用户交互）
     const now = performance.now();
     const deltaTime = (now - lastFrameTimeRef.current) / 1000;
     lastFrameTimeRef.current = now;
-    updateCameraFromInput(deltaTime);
+    if (!suspendedRef.current) cameraInputRef.current(Math.min(deltaTime, 0.1));
 
     // 更新渲染管线的视图矩阵和相机
     const pipeline = renderPipelineRef.current;
@@ -849,6 +881,7 @@ export default function HoloEngineRuntime({
       (objId, worker, viewProj, time) => {
         // 更新 Worker（用于深度排序）
         if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
+          renderStatsRef.current.sortRequests++;
           worker.postMessage({ view: viewProj, time });
         }
       },
@@ -856,8 +889,8 @@ export default function HoloEngineRuntime({
       objectOrder // 对象顺序列表（按hierarchy顺序）
     );
 
-    animationFrameRef.current = requestAnimationFrame(render);
-  }, [canvasRef, updateCameraFromInput, sceneManager]);
+    if (!suspendedRef.current) animationFrameRef.current = requestAnimationFrame(render);
+  }, [canvasRef, sceneManager]);
 
   // 启动渲染循环
   useEffect(() => {
@@ -869,14 +902,32 @@ export default function HoloEngineRuntime({
       return;
     }
 
-    animationFrameRef.current = requestAnimationFrame(render);
+    const invalidate = () => {
+      if (animationFrameRef.current === null) animationFrameRef.current = requestAnimationFrame(render);
+    };
+    invalidateRef.current = invalidate;
+    const observer = new ResizeObserver(invalidate);
+    observer.observe(canvasRef.current);
+    invalidate();
 
     return () => {
-      if (animationFrameRef.current) {
+      invalidateRef.current = () => {};
+      observer.disconnect();
+      if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
     };
   }, [gl, uniforms, render]);
+
+  useEffect(() => {
+    if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = null;
+    lastFrameTimeRef.current = performance.now();
+    invalidateRef.current();
+  }, [suspended, redrawVersion, showGrid, showAxes, controlledTime, targetVerticalFOV,
+    meshDebugMode, showDepthVisualization, depthRange, depthRangeNear, depthGamma,
+    depthOpacityThreshold, centerOpacityThreshold]);
 
 
   // 处理错误
