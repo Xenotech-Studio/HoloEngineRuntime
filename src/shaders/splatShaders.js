@@ -87,14 +87,8 @@ export const vertexShaderSource = `
           gaussianScale = vec3(unpackHalf2x16(static1.y).xy, unpackHalf2x16(static1.z).x);
       }
       
-      vec3 modelScale = vec3(
-        length(model[0].xyz),
-        length(model[1].xyz),
-        length(model[2].xyz)
-      );
       vec3 minGs = vec3(max(u_gaussianScaleMin, 0.0));
-      vec3 blendedGs = mix(minGs, gaussianScale, scaleT);
-      vec3 scale = blendedGs * modelScale;
+      vec3 scale = mix(minGs, gaussianScale, scaleT);
       
       rot /= sqrt(dot(rot, rot));
 
@@ -107,25 +101,11 @@ export const vertexShaderSource = `
       mat3 M = S * R;
       mat3 Vrk = 4.0 * transpose(M) * M;
       
-      vec3 modelCol0 = model[0].xyz;
-      vec3 modelCol1 = model[1].xyz;
-      vec3 modelCol2 = model[2].xyz;
-      float len0 = length(modelCol0);
-      float len1 = length(modelCol1);
-      float len2 = length(modelCol2);
-      vec3 rotCol0 = len0 > 1e-6 ? modelCol0 / len0 : vec3(1.0, 0.0, 0.0);
-      vec3 rotCol1 = len1 > 1e-6 ? modelCol1 / len1 : vec3(0.0, 1.0, 0.0);
-      vec3 rotCol2 = len2 > 1e-6 ? modelCol2 / len2 : vec3(0.0, 0.0, 1.0);
-      vec3 v0 = normalize(rotCol0);
-      vec3 v1 = rotCol1 - dot(rotCol1, v0) * v0;
-      v1 = normalize(v1);
-      vec3 v2 = rotCol2 - dot(rotCol2, v0) * v0 - dot(rotCol2, v1) * v1;
-      v2 = normalize(v2);
-      if (dot(cross(v0, v1), v2) < 0.0) {
-        v2 = -v2;
-      }
-      mat3 modelRot = mat3(v0, v1, v2);
-      Vrk = modelRot * Vrk * transpose(modelRot);
+      // Audit #1: covariance push-forward, Sigma_world = A Sigma_local A^T.
+      // Keep STG's wxyz + column-major R convention above; do not commute
+      // model-axis scaling with local rotation or discard reflection/shear.
+      mat3 A = mat3(model);
+      Vrk = A * Vrk * transpose(A);
       mat3 J = mat3(
         focal.x / cam.z, 0., -(focal.x * cam.x) / (cam.z * cam.z), 
         0., -focal.y / cam.z, (focal.y * cam.y) / (cam.z * cam.z), 
@@ -134,12 +114,32 @@ export const vertexShaderSource = `
       mat3 T = transpose(mat3(view)) * J;
       mat3 cov2d = transpose(T) * Vrk * T;
   
-      float mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
-      float radius = length(vec2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
-      float lambda1 = mid + radius, lambda2 = mid - radius;
-  
-      if(lambda2 < 0.0) return;
-      vec2 diagonalVector = normalize(vec2(cov2d[0][1], lambda1 - cov2d[0][0]));
+      // Audit #3: symmetric 2x2 eigensystem, scaled to avoid overflow.
+      // Use det/lambda_max for the thin axis, not cancellation-prone mid-radius.
+      vec3 covariance = vec3(cov2d[0][0],
+          0.5 * cov2d[0][1] + 0.5 * cov2d[1][0], cov2d[1][1]);
+      if (any(isnan(covariance)) || any(isinf(covariance))) return;
+      float magnitude = max(max(abs(covariance.x), abs(covariance.y)), abs(covariance.z));
+      vec3 c = covariance / max(magnitude, 1e-30);
+      float mid = 0.5 * (c.x + c.z);
+      float radius = length(vec2(0.5 * (c.x - c.z), c.y));
+      float major = max(mid + radius, 0.0);
+      float determinant = c.x * c.z - c.y * c.y;
+      // 8 float32 eps in normalized units: repair roundoff, not genuinely
+      // indefinite input. A valid covariance is positive semidefinite.
+      const float psdTolerance = 9.5367431640625e-7;
+      if (min(c.x, c.z) < -psdTolerance || determinant < -psdTolerance) return;
+      float minor = major > 0.0 ? max(determinant / major, 0.0) : 0.0;
+      vec2 eigenvector = c.x >= c.z ? vec2(major - c.z, c.y) : vec2(c.y, major - c.x);
+      float eigenLength = length(eigenvector);
+      vec2 diagonalVector = eigenLength > 0.0 ? eigenvector / eigenLength : vec2(1.0, 0.0);
+
+      // Audit #2: training forward_lite/forward.cu adds 0.3 pixel^2 I.
+      // This shader stores 4*Sigma (paired with /viewport below), so add 1.2.
+      // Adding isotropic I to eigenvalues is equivalent to adding it to the
+      // diagonal, but preserves the pixel floor even for very thin ellipses.
+      float lambda1 = magnitude * major + 1.2;
+      float lambda2 = magnitude * minor + 1.2;
       vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
