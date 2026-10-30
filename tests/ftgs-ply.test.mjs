@@ -45,6 +45,7 @@ test('native FTGS comments/fields become temporal 4D with complete channel-major
 });
 test('content determines representation, but temporal assets require exactly .ftgs.ply suffix',async()=>{
   assert.equal(isPlyUrl('model.ftgs.ply?token=1#view'),true);
+  assert.equal(isPlyUrl('data:application/octet-stream,%FF%FE'),false);
   assert.equal(isFtgsPlyUrl('model.ftgs.ply?token=1'),true);
   assert.equal(isFtgsPlyUrl('model.FTGS.PLY'),false);
   assert.throws(()=>parseFtgsPly(fixture(),'model.ply'),/ending exactly .ftgs.ply/);

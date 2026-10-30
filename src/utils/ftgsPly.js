@@ -13,7 +13,12 @@ function pathname(url) {
   catch { fail('invalid source URL'); }
 }
 
-export const isPlyUrl = url => /\.ply$/i.test(pathname(url));
+export function isPlyUrl(url) {
+  // Routing must not reject non-PLY sources (e.g. percent-encoded binary data
+  // URLs) that the unchanged splatv/kiriv fetch path already supports.
+  try { return /\.ply$/i.test(pathname(url)); }
+  catch { return false; }
+}
 export const isFtgsPlyUrl = url => pathname(url).endsWith('.ftgs.ply');
 
 /** Content wins over the requested render type, after PLY parsing. */
