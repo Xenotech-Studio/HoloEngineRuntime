@@ -920,6 +920,7 @@ export class HoloRP {
         if (obj.worker && changed) {
           sortOwner._sortInvalidated = false;
           sortOwner._lastRequestedSnapshot = snapshot;
+          if (sortOwner.frameMetrics) snapshot.metricsSentAt = performance.now();
           obj.worker.postMessage({ view: snapshot.viewProj, time: snapshot.time,
             snapshot, sortStrategy: snapshot.sortStrategy });
           // Observer only: the pipeline is the sole sender of sort requests.

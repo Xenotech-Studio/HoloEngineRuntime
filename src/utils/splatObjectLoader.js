@@ -57,8 +57,10 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
     const shouldLog = typeof window !== 'undefined' && window.enableAssetPreviewDebugLogs;
     if (result.depthIndex) {
       if (shouldLog) target._lastDepthIndices = new Uint32Array(result.depthIndex);
+      const uploadStart = target.frameMetrics ? performance.now() : null;
       gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, result.depthIndex, gl.DYNAMIC_DRAW);
+      if (uploadStart !== null) target.frameMetrics.add('sortUploadMs', performance.now() - uploadStart);
       recycle(result);
     }
     target.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
@@ -79,6 +81,12 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
     if (e.data.sortInvalidated) target._sortInvalidated = true;
     if (!e.data.snapshot || !indexBuffer) return;
     const result = { ...e.data, worker: e.target };
+    // Match the echoed snapshot, including requests coalesced by the worker.
+    if (target.frameMetrics && result.depthIndex && Number.isFinite(result.snapshot.metricsSentAt)) {
+      const roundTrip = performance.now() - result.snapshot.metricsSentAt;
+      target.frameMetrics.add('sortRoundTripMs', roundTrip);
+      if (Number.isFinite(result.sortMs)) target.frameMetrics.add('sortWaitMs', Math.max(0, roundTrip - result.sortMs));
+    }
     const latestId = pending?.snapshot.requestId ?? target.acceptedSort?.snapshot.requestId ?? 0;
     if (result.requestId <= latestId) { recycle(result); return; }
     if (!result.depthIndex) {
