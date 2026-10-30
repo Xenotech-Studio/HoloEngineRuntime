@@ -410,6 +410,8 @@ export default function HoloEngineRuntime({
       pipeline.addObject(renderObj);
     }
     
+    renderObj.sortSource = sceneObj;
+
     // 更新渲染对象的资源（如果场景对象已加载）
     if (sceneObj.loaded) {
       // 根据asset的type字段判断类型（优先），如果没有type则根据文件扩展名推断
@@ -697,30 +699,8 @@ export default function HoloEngineRuntime({
                 syncObjectToPipeline(obj, renderPipelineRef.current, workerReadyRef);
               }
               
-              // 发送初始view矩阵到Worker
-              if (gl && canvasRef.current && renderPipelineRef.current && viewMatrixRef.current && cameraRef.current) {
-                const canvas = canvasRef.current;
-                const canvasWidth = canvas.clientWidth || canvas.width || window.innerWidth;
-                const canvasHeight = canvas.clientHeight || canvas.height || window.innerHeight;
-                const activeCamera = cameraRef.current;
-                
-                // 更新相机的宽高（如果 canvas 尺寸变化）
-                activeCamera.width = canvasWidth;
-                activeCamera.height = canvasHeight;
-                
-                const projectionMatrix = activeCamera.projectionMatrix;
-                const viewMatrix = activeCamera.viewMatrix;
-                const currentModelMatrix = obj.getModelMatrix ? obj.getModelMatrix(createTransformMatrix) : createTransformMatrix(obj.position, obj.rotation.map(deg => (deg * Math.PI) / 180), obj.scale);
-                const viewProj = activeCamera.getViewProjModelMatrix(currentModelMatrix);
-                
-                if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16 && obj.worker) {
-                  obj.worker.postMessage({
-                    view: viewProj,
-                    time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
-                  });
-                }
-              }
-              
+              invalidateRef.current();
+
               checkAllLoaded();
             }
           } else {
@@ -766,23 +746,8 @@ export default function HoloEngineRuntime({
                 syncObjectToPipeline(obj, renderPipelineRef.current, workerReadyRef);
               }
               
-              // 发送初始视图投影矩阵到 Worker（相机相关，由组件自行管理）
-              const canvas = canvasRef.current;
-              const canvasWidth = canvas ? (canvas.clientWidth || canvas.width || window.innerWidth) : window.innerWidth;
-              const canvasHeight = canvas ? (canvas.clientHeight || canvas.height || window.innerHeight) : window.innerHeight;
-              const activeCamera = cameraRef.current || getDefaultCamera();
-              
-              // 更新相机的宽高（如果 canvas 尺寸变化）
-              activeCamera.width = canvasWidth;
-              activeCamera.height = canvasHeight;
-              
-              const modelMatrix = obj.getModelMatrix(createTransformMatrix);
-              const viewProj = activeCamera.getViewProjModelMatrix(modelMatrix);
-              worker.postMessage({
-                view: viewProj,
-                time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
-              });
-              
+              invalidateRef.current();
+
               // Worker的第一次深度排序完成后会通过onmessage回调标记为就绪
               // 这里不立即检查，等待Worker返回第一次深度排序结果
             }
@@ -840,7 +805,7 @@ export default function HoloEngineRuntime({
       if (obj.worker && !observedWorkersRef.current.has(obj.worker)) {
         observedWorkersRef.current.add(obj.worker);
         obj.worker.addEventListener('message', event => {
-          if (!event.data.depthIndex) return;
+          if (!event.data.snapshot && !event.data.sortInvalidated) return;
           renderStatsRef.current.sortResults++;
           invalidateRef.current();
         });
@@ -891,7 +856,7 @@ export default function HoloEngineRuntime({
         // 更新 Worker（用于深度排序）
         if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
           renderStatsRef.current.sortRequests++;
-          worker.postMessage({ view: viewProj, time });
+          // Pipeline already sent the versioned snapshot.
         }
       },
       null, // XR frame（非XR模式）

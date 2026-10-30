@@ -37,7 +37,15 @@ export function calculateVertexCount(buffer, gaussStridePixels = 4) {
 export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObject, onFirstDepthSort, onError }) {
   let firstDepthSortReceived = false;
   return (e) => {
-    if (!e.data.depthIndex || !indexBuffer) return;
+    if (e.data.sortInvalidated && targetObject) targetObject._sortInvalidated = true;
+    if (!e.data.snapshot || !indexBuffer) return;
+    const result = e.data;
+    const accepted = targetObject?.acceptedSort;
+    if (result.requestId <= (accepted?.snapshot.requestId || 0)) return;
+    if (!result.depthIndex) {
+      if (accepted?.orderId === result.orderId) targetObject.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
+      return;
+    }
     const { depthIndex, vertexCount } = e.data;
     const shouldLog = typeof window !== 'undefined' && window.enableAssetPreviewDebugLogs;
     if (shouldLog && targetObject) {
@@ -54,6 +62,7 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
       }
     } catch { /* 回收失败无妨，退化为每帧新分配 */ }
     if (targetObject) {
+      targetObject.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
       targetObject.vertexCount = vertexCount;
       if (!firstDepthSortReceived) targetObject.ready = true;
     }

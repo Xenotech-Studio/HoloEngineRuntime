@@ -545,6 +545,10 @@ export class HoloRP {
       return;
     }
 
+    this._frameSnapshots = new Map();
+    this._frameTargetTime = this._resolveFourDGaussianTimeUniform();
+    this._singleView = views.length === 1;
+
     // 为每个视图渲染
     for (const viewInfo of views) {
       // 设置视口
@@ -591,7 +595,7 @@ export class HoloRP {
       }
 
       if (this.uniforms && this.uniforms.time) {
-        gl.uniform1f(this.uniforms.time, this._resolveFourDGaussianTimeUniform());
+        gl.uniform1f(this.uniforms.time, this._frameTargetTime);
       }
 
       // 获取所有对象并按类型分组
@@ -865,7 +869,7 @@ export class HoloRP {
     
     // 4DGS需要time uniform，3DGS不需要
     if (is4DGS && uniforms.time) {
-      gl.uniform1f(uniforms.time, this._resolveFourDGaussianTimeUniform());
+      gl.uniform1f(uniforms.time, this._frameTargetTime);
     }
     
     // 设置深度写入的不透明度阈值
@@ -897,6 +901,42 @@ export class HoloRP {
     // 为每个点云分配不同的stencil值，并渲染
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
+      let snapshot = this._frameSnapshots.get(obj);
+      if (!snapshot) {
+        const model = Array.from(obj.getModelMatrix());
+        const view = Array.from(viewMatrix);
+        const projection = Array.from(projectionMatrix);
+        snapshot = {
+          requestId: obj._nextSortRequestId = (obj._nextSortRequestId || 0) + 1,
+          time: is4DGS ? this._frameTargetTime : 0.5,
+          sortStrategy: obj.sortStrategy || 'back-to-front',
+          model, view, projection,
+          viewProj: multiply4(projection, multiply4(view, model)),
+          width: viewInfo.viewport.width, height: viewInfo.viewport.height,
+          fx: viewInfo.fx, fy: viewInfo.fy,
+        };
+        this._frameSnapshots.set(obj, snapshot);
+        const previous = obj._lastRequestedSnapshot;
+        const changed = (obj.sortSource || obj)._sortInvalidated || !previous || ['time', 'sortStrategy', 'width', 'height', 'fx', 'fy'].some(key => snapshot[key] !== previous[key])
+          || ['model', 'view', 'projection'].some(key => snapshot[key].some((value, index) => value !== previous[key][index]));
+        if (obj.worker && changed) {
+          (obj.sortSource || obj)._sortInvalidated = false;
+          obj._lastRequestedSnapshot = snapshot;
+          obj.worker.postMessage({ view: snapshot.viewProj, time: snapshot.time,
+            snapshot, sortStrategy: snapshot.sortStrategy });
+          // Observer only: the pipeline is the sole sender of sort requests.
+          if (onUpdateWorker) onUpdateWorker(obj.id, obj.worker, snapshot.viewProj, snapshot.time);
+        }
+      }
+      const accepted = (obj.sortSource || obj).acceptedSort?.snapshot;
+      // Canvas draws the complete accepted version. XR retains per-eye camera
+      // matrices; both eyes share the single first-eye sorting request.
+      const draw = this._singleView && accepted ? accepted : snapshot;
+      if (uniforms.view) gl.uniformMatrix4fv(uniforms.view, false, this._singleView ? draw.view : viewMatrix);
+      if (uniforms.projection) gl.uniformMatrix4fv(uniforms.projection, false, this._singleView ? draw.projection : projectionMatrix);
+      if (uniforms.time && is4DGS) gl.uniform1f(uniforms.time, accepted?.time ?? snapshot.time);
+      if (uniforms.focal) gl.uniform2f(uniforms.focal, this._singleView ? draw.fx : viewInfo.fx, this._singleView ? draw.fy : viewInfo.fy);
+      if (uniforms.viewport) gl.uniform2f(uniforms.viewport, this._singleView ? draw.width : viewInfo.viewport.width, this._singleView ? draw.height : viewInfo.viewport.height);
       const stencilValue = i + 1;
       
       gl.stencilFunc(gl.ALWAYS, stencilValue, 0xFF);
@@ -911,7 +951,7 @@ export class HoloRP {
       gl.depthFunc(gl.LEQUAL);
       gl.depthMask(false);
       // 颜色遍始终更新 worker 的 view/time，关闭深度遍不会中断排序或动画。
-      this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
+      this._renderSplat(obj, draw.model, program, uniforms, attributes, is4DGS);
 
       // 第二遍为与 mesh/点云混合提供 GS 深度；首页仅有单个 GS，可省去此遍。
       if (this.depthWritePassEnabled) {
@@ -920,7 +960,7 @@ export class HoloRP {
         }
         gl.depthFunc(gl.LEQUAL);
         gl.depthMask(true);
-        this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
+        this._renderSplat(obj, draw.model, program, uniforms, attributes, is4DGS);
       }
       // 保持退出时的深度写入状态，供后续绘制和下一帧清屏使用。
       gl.depthMask(true);
@@ -931,36 +971,9 @@ export class HoloRP {
    * 渲染单个 4DGS/3DGS 对象
    * @private
    */
-  _renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program = null, uniforms = null, attributes = null, is4DGS = true) {
+  _renderSplat(obj, modelMatrix, program = null, uniforms = null, attributes = null, is4DGS = true) {
     const gl = this.gl;
-    const modelMatrix = obj.getModelMatrix();
-    
-    // 更新 Worker（用于深度排序）
-    if (onUpdateWorker && obj.worker) {
-      const viewModel = multiply4(viewMatrix || identity4(), modelMatrix);
-      const viewProj = multiply4(projectionMatrix, viewModel);
-      if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
-        // sortStrategy 只在实际变化时再发一次；每帧发会让 worker 反复 force-sort,
-        // 还会卡住 sortRunning 让后续 {view,time} 的实际 sort 被吞掉一帧 (E5 motion-evolved
-        // sort 需要每帧的 currentTime 进入 runSort).
-        const sortStrategy = obj.sortStrategy || 'back-to-front';
-        if (obj._lastSentSortStrategy !== sortStrategy) {
-          obj.worker.postMessage({ sortStrategy });
-          obj._lastSentSortStrategy = sortStrategy;
-        }
-        // 然后更新view矩阵
-        // A moving 4DGS must sort with the same time value as the shader.
-        // Passing it through the render callback also lets the worker avoid
-        // scheduling a new sort while both the view and manual time are still.
-        onUpdateWorker(
-          obj.id,
-          obj.worker,
-          viewProj,
-          is4DGS ? this._resolveFourDGaussianTimeUniform() : null,
-        );
-      }
-    }
-    
+
     if (!obj.isReady()) {
       return;
     }

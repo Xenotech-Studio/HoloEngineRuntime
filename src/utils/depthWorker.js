@@ -11,9 +11,11 @@ function createWorker(self) {
   let useMotionEvolvedSort = true; // E5: sort by motion-evolved positions (not static_xyz)
   let viewProj;
   let vertexCount;
-  let lastVertexCount = 0;
+  let snapshot = null;
+  let orderId = 0;
+  let completedRequestId = 0;
   let sortStrategy = 'back-to-front';
-  let lastSortStrategy = 'back-to-front';
+
   let enableDebugLogs = false;
 
   // half-float (IEEE 754 binary16) decoder. Same convention as GLSL unpackHalf2x16.
@@ -88,8 +90,10 @@ function createWorker(self) {
       const depthIndex = acquireDepthIndex(vertexCount);
       for (let i = 0; i < vertexCount; i++) depthIndex[i] = i;
       lastProj = viewProj;
+      lastSortedTime = currentTime;
+      orderId++;
       const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
-      self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime }, [depthIndex.buffer]);
+      self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime, snapshot, requestId: snapshot?.requestId, orderId }, [depthIndex.buffer]);
       return;
     }
 
@@ -127,7 +131,7 @@ function createWorker(self) {
     }
 
     lastProj = viewProj;
-    lastSortStrategy = sortStrategy;
+    orderId++;
     lastSortedTime = currentTime;
     const sortMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - sortStart;
     if (enableDebugLogs) {
@@ -135,7 +139,7 @@ function createWorker(self) {
     }
     // 回传本次排序所用的 4D time：主线程据此让 shader 渲染「与当前深度顺序对应的那一刻时间」，
     // 使异步排序的延迟只体现为动画整体略晚，而深度顺序始终与所显示的几何一致。
-    self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime }, [depthIndex.buffer]);
+    self.postMessage({ depthIndex, viewProj, vertexCount, sortMs, time: currentTime, snapshot, requestId: snapshot?.requestId, orderId }, [depthIndex.buffer]);
   }
 
   // —— 排序调度：seq + 「泵」+ MessageChannel 立即宏任务 ——
@@ -150,10 +154,19 @@ function createWorker(self) {
   function pump() {
     pumpScheduled = false;
     if (!viewProj || !positions) return;
-    if (sortedSeq === viewSeq) return;          // 无更新输入 → 不空转（静止 / 暂停场景直接跳过）
+    if (sortedSeq === viewSeq) {
+      // The existing order is valid within the tolerance, but time and camera
+      // still advance atomically through a versioned acknowledgement.
+      if (snapshot && snapshot.requestId !== completedRequestId) {
+        self.postMessage({ snapshot, requestId: snapshot.requestId, orderId, vertexCount, time: currentTime });
+        completedRequestId = snapshot.requestId;
+      }
+      return;
+    }
     const seq = viewSeq;
     runSort(viewProj);                          // 同步排序当前最新视图
     sortedSeq = seq;
+    completedRequestId = snapshot?.requestId;
     if (viewSeq !== sortedSeq) schedulePump();  // 让出期间又有更新 → 继续泵，保证收敛到最新
   }
 
@@ -227,33 +240,38 @@ function createWorker(self) {
       vertexCount = e.data.vertexCount;
     } else if (e.data.enableDebugLogs !== undefined) {
       enableDebugLogs = e.data.enableDebugLogs === true;
-    } else if (e.data.sortStrategy) {
+    } else if (e.data.sortStrategy && !e.data.view) {
       const newStrategy = e.data.sortStrategy || 'back-to-front';
       if (sortStrategy !== newStrategy) {
         sortStrategy = newStrategy;
         viewSeq++;                                 // 策略变（前后 / 后前）→ 强制重排
-        if (viewProj && positions) schedulePump();
+        // The next frame supplies the complete snapshot before sorting.
+        self.postMessage({ sortInvalidated: true });
       }
     } else if (e.data.view) {
+      if (!e.data.snapshot) return; // Only the pipeline owns versioned view/time requests.
+      snapshot = e.data.snapshot;
+      if (e.data.sortStrategy && e.data.sortStrategy !== sortStrategy) {
+        sortStrategy = e.data.sortStrategy;
+        viewSeq++;
+      }
       // E5: 每帧的 time 跟着 view 一起送过来；motion-evolved sort 需要它。
       const v = e.data.view;
       const t = (typeof e.data.time === 'number' && Number.isFinite(e.data.time)) ? e.data.time : currentTime;
       const timeMatters = useMotionEvolvedSort && hasMotion;   // 3DGS / 非 motion-evolved 时 time 不影响排序
-      const changed = depthRowChanged(v, viewProj) || (timeMatters && t !== currentTime);
+      // Compare with the last REAL sort, never the last input: successive
+      // sub-threshold rotations otherwise reset the baseline forever and drift.
+      const changed = depthRowChanged(v, lastProj) || (timeMatters && t !== lastSortedTime);
       viewProj = v;
       currentTime = t;
-      if (changed) { viewSeq++; schedulePump(); }  // 静止（view 深度行 + time 均未变）→ 不推进 → pump 跳过，不空转
-    } else if (typeof e.data.time === 'number' && Number.isFinite(e.data.time)) {
-      // 单独的 time 更新（如 __holoDebug.setTime，view 不变）：仅在带 motion 时才影响排序
-      const timeMatters = useMotionEvolvedSort && hasMotion;
-      const changed = timeMatters && e.data.time !== currentTime;
-      currentTime = e.data.time;
-      if (changed && viewProj) { viewSeq++; schedulePump(); }
+      if (changed) viewSeq++;
+      schedulePump();  // 静止（view 深度行 + time 均未变）→ 不推进 → pump 跳过，不空转
     } else if (typeof e.data.useMotionEvolvedSort === 'boolean') {
       if (useMotionEvolvedSort !== e.data.useMotionEvolvedSort) {
         useMotionEvolvedSort = e.data.useMotionEvolvedSort;
         viewSeq++;                                 // motion 排序模式切换 → 强制重排
-        if (viewProj && positions) schedulePump();
+        // The next frame supplies the complete snapshot before sorting.
+        self.postMessage({ sortInvalidated: true });
       }
     }
   };
