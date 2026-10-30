@@ -179,6 +179,9 @@ declarations, not inference from PLY. `range` defines viewer playback mapping:
 t_file=a+(b-a)*t_viewer, t_viewer in [0,1]. Reader transforms center, width and
 motion coefficients to that clock before shader/worker use. fps does not change
 coefficients or establish a duration unless supplied with units/frame provenance.
+The bundled converter rejects metadata contradicting a FTGS PLY's known
+normalized [0,1] clock, training-space positions, or exported n_frames. It does
+not relabel those fields as seconds/world without transforming the attributes.
 
 ## Legacy compatibility and validation
 
