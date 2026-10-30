@@ -428,6 +428,7 @@ pipeline.addObject(obj);
 - `depthRange` - 深度范围（米）
 - `depthRangeNear` - 近处深度范围（米）
 - `depthGamma` - Gamma 值
+- `depthWritePassEnabled` - 是否启用 GS 深度写入第二遍（默认 `true`）；用于与 mesh/点云混合时的深度遮挡，仅有单个 GS 且无 mesh/点云的首页可设为 `false`，避免重复绘制。管线 API：`setDepthWritePassEnabled(enabled)` / `getDepthWritePassEnabled()`
 - `depthOpacityThreshold` - 深度写入的像素不透明度阈值
 - `centerOpacityThreshold` - 深度写入的中心点不透明度阈值
 

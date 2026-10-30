@@ -210,6 +210,7 @@ export class HoloRP {
     this.depthRange = 30.0;          // 深度范围（米），用于映射，例如 30.0 表示关注 10-30 米范围
     this.depthRangeNear = 10.0;      // 近处深度范围（米），用于调整颜色渐变的起始距离
     this.depthGamma = 1.5;           // Gamma 值，用于调整映射曲线的非线性程度（>1 时增强近处，<1 时增强远处）
+    this.depthWritePassEnabled = true; // 默认保留与 mesh/点云混合时所需的 GS 深度
     this.depthOpacityThreshold = 0.13; // 深度写入的像素不透明度阈值（0.0-1.0），过滤当前像素的透明度，默认0.13
     this.centerOpacityThreshold = 0.65; // 深度写入的中心点不透明度阈值（0.0-1.0），过滤高斯点中心位置的透明度，默认0.65
     // 高斯尺寸：0 = 三轴均为 gaussianScaleMin，1 = 纹理真实三轴 scale（与 PLY 缺省 exp scale 量级一致，便于看见）
@@ -403,6 +404,15 @@ export class HoloRP {
    */
   setDepthGamma(gamma) {
     this.depthGamma = gamma !== undefined && gamma !== null ? Math.max(0.1, Math.min(5.0, gamma)) : 1.5;
+  }
+
+  /** 设置 GS 深度第二遍；仅单个 GS、无 mesh/点云的首页可关闭以避免重复绘制。 */
+  setDepthWritePassEnabled(enabled) {
+    this.depthWritePassEnabled = Boolean(enabled);
+  }
+
+  getDepthWritePassEnabled() {
+    return this.depthWritePassEnabled;
   }
 
   /**
@@ -895,29 +905,16 @@ export class HoloRP {
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
       
-      if (i === 0) {
-        // 第一个点云：使用两遍渲染
-        if (uniforms.depthWriteOnly !== undefined && uniforms.depthWriteOnly !== null) {
-          gl.uniform1i(uniforms.depthWriteOnly, 0);
-        }
-        gl.depthFunc(gl.LEQUAL);
-        gl.depthMask(false);
-        this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
-        
-        if (uniforms.depthWriteOnly !== undefined && uniforms.depthWriteOnly !== null) {
-          gl.uniform1i(uniforms.depthWriteOnly, 1);
-        }
-        gl.depthFunc(gl.LEQUAL);
-        gl.depthMask(true);
-        this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
-      } else {
-        if (uniforms.depthWriteOnly !== undefined && uniforms.depthWriteOnly !== null) {
-          gl.uniform1i(uniforms.depthWriteOnly, 0);
-        }
-        gl.depthFunc(gl.LEQUAL);
-        gl.depthMask(false);
-        this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
-        
+      if (uniforms.depthWriteOnly !== undefined && uniforms.depthWriteOnly !== null) {
+        gl.uniform1i(uniforms.depthWriteOnly, 0);
+      }
+      gl.depthFunc(gl.LEQUAL);
+      gl.depthMask(false);
+      // 颜色遍始终更新 worker 的 view/time，关闭深度遍不会中断排序或动画。
+      this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
+
+      // 第二遍为与 mesh/点云混合提供 GS 深度；首页仅有单个 GS，可省去此遍。
+      if (this.depthWritePassEnabled) {
         if (uniforms.depthWriteOnly !== undefined && uniforms.depthWriteOnly !== null) {
           gl.uniform1i(uniforms.depthWriteOnly, 1);
         }
@@ -925,6 +922,8 @@ export class HoloRP {
         gl.depthMask(true);
         this._renderSplat(obj, viewMatrix, projectionMatrix, onUpdateWorker, program, uniforms, attributes, is4DGS);
       }
+      // 保持退出时的深度写入状态，供后续绘制和下一帧清屏使用。
+      gl.depthMask(true);
     }
   }
 

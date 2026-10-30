@@ -37,6 +37,7 @@ export default function HoloEngineRuntime({
   depthRange = 30.0, // 深度范围（米），用于调整颜色渐变的最远距离
   depthRangeNear = 10.0, // 近处深度范围（米），用于调整颜色渐变的起始距离
   depthGamma = 1.5, // Gamma 值，用于调整映射曲线的非线性程度
+  depthWritePassEnabled = true, // 与 mesh/点云混合时需要 GS 深度第二遍
   depthOpacityThreshold = 0.13, // 深度写入的像素不透明度阈值（0.0-1.0）
   centerOpacityThreshold = 0.65, // 深度写入的中心点不透明度阈值（0.0-1.0）
   // ``null`` keeps HoloRP's built-in animation; [0, 1] pins 4DGS time.
@@ -112,6 +113,7 @@ export default function HoloEngineRuntime({
     // run with no pipeline and will not rerun for an unchanged prop. Seed
     // every new/recreated pipeline before exposing it to the render loop.
     pipeline.fourDGaussianTimeUser = controlledTime;
+    pipeline.setDepthWritePassEnabled(depthWritePassEnabled);
     pipeline.initAxisGrid(initAxisGridRenderer);
     renderPipelineRef.current = pipeline;
     
@@ -175,6 +177,13 @@ export default function HoloEngineRuntime({
       renderPipelineRef.current.setDepthGamma(depthGamma);
     }
   }, [depthGamma]);
+
+  // 单独同步开关，不重建管线；初始化时也应用，覆盖 WebGL 延迟就绪。
+  useEffect(() => {
+    if (renderPipelineRef.current) {
+      renderPipelineRef.current.setDepthWritePassEnabled(depthWritePassEnabled);
+    }
+  }, [depthWritePassEnabled]);
 
   // 设置深度写入的不透明度阈值
   useEffect(() => {
@@ -927,7 +936,7 @@ export default function HoloEngineRuntime({
     invalidateRef.current();
   }, [suspended, redrawVersion, showGrid, showAxes, controlledTime, targetVerticalFOV,
     meshDebugMode, showDepthVisualization, depthRange, depthRangeNear, depthGamma,
-    depthOpacityThreshold, centerOpacityThreshold]);
+    depthWritePassEnabled, depthOpacityThreshold, centerOpacityThreshold]);
 
 
   // 处理错误
