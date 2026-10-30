@@ -1,7 +1,57 @@
 // Depth sorting Worker 代码
 // 这个文件包含 Worker 的代码，会被转换为 Blob URL
 
-function createWorker(self) {
+// Keep this closure self-contained: it is serialized into the Blob worker.
+function createSimdSorter(bytes) {
+  try {
+    const probe = new Uint8Array([0,97,115,109,1,0,0,0,1,4,1,96,0,0,3,2,1,0,10,44,1,42,0,253,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,253,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,253,240,1,26,11]);
+    if (typeof WebAssembly === 'undefined' || !WebAssembly.validate(probe)) return null;
+    const kernel = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+    let source = null, pairs = 0, offset = 0, values = null;
+    return {
+      depths(positions, motion, centers, n, applyMotion, time, view) {
+        if (source !== positions || pairs !== Math.ceil(n / 2)) {
+          pairs = Math.ceil(n / 2);
+          offset = pairs * 208;
+          const bytesNeeded = offset + pairs * 16;
+          const pages = Math.ceil(bytesNeeded / 65536);
+          const currentPages = kernel.memory.buffer.byteLength / 65536;
+          if (pages > currentPages) kernel.memory.grow(pages - currentPages);
+          const packed = new Float64Array(kernel.memory.buffer, 0, pairs * 26);
+          // Decode/repack once per model. Two f64 lanes are two independent
+          // gaussians; fp32 inputs are exactly representable as JS doubles.
+          for (let i = 0; i < n; i++) {
+            const base = Math.floor(i / 2) * 26 + i % 2;
+            for (let k = 0; k < 3; k++) packed[base + k * 2] = positions[i * 3 + k];
+            for (let k = 0; k < 9; k++) packed[base + (k + 3) * 2] = motion[i * 9 + k];
+            packed[base + 24] = centers[i];
+          }
+          values = new Float64Array(kernel.memory.buffer, offset, pairs * 2);
+          source = positions;
+        }
+        if (pairs) kernel.depths(pairs, offset, applyMotion ? 1 : 0, time, view[2], view[6], view[10]);
+        return values;
+      },
+      quantize(min, inverse) {
+        if (pairs) kernel.quantize(pairs, offset, min, inverse);
+        return values;
+      },
+    };
+  } catch {
+    // Unsupported SIMD, CSP, bad binary, or allocation failure: original JS.
+    return null;
+  }
+}
+
+function createWorker(self, wasmUrl = null, initialSimd = null) {
+  let simd = initialSimd;
+  if (wasmUrl) {
+    fetch(wasmUrl).then(response => {
+      if (!response.ok) throw new Error('WASM load failed');
+      return response.arrayBuffer();
+    }).then(bytes => { simd = createSimdSorter(bytes); }).catch(() => {});
+  }
+
   let lastProj;
   let positions;        // [N×3] static xyz fp32 (from u32[0..2] uintBitsToFloat)
   let motion;           // [N×9] motion polynomial coefficients (fp32 decoded from packed half2x16)
@@ -65,22 +115,37 @@ function createWorker(self) {
     // 注意: 这里不要再声明 hasMotion 同名 const, 会跟外层 hasMotion 撞 TDZ -> 整个
     // runSort 抛 ReferenceError -> worker 永远不出 depthIndex -> 黑屏.
     const applyMotion = useMotionEvolvedSort && hasMotion && motion && trbfCenter;
-    for (let i = 0; i < vertexCount; i++) {
-      let x = positions[3 * i + 0], y = positions[3 * i + 1], z = positions[3 * i + 2];
-      if (applyMotion) {
-        // E5: 加上 motion polynomial 给出的当前 t 下的位置。每帧重算保持跟 STG CUDA
-        // rasterizer 同款 motion-evolved 排序。
-        // 索引: motion[9i+0..2]=linear (motion_0..2), [3..5]=quadratic (motion_3..5),
-        //       [6..8]=cubic (motion_6..8). 与 shader 中 tpos 公式 (line 48) 对应.
-        const dt = currentTime - trbfCenter[i];
-        const dt2 = dt * dt;
-        const dt3 = dt2 * dt;
-        const b = 9 * i;
-        x += motion[b + 0] * dt + motion[b + 3] * dt2 + motion[b + 6] * dt3;
-        y += motion[b + 1] * dt + motion[b + 4] * dt2 + motion[b + 7] * dt3;
-        z += motion[b + 2] * dt + motion[b + 5] * dt2 + motion[b + 8] * dt3;
+    let simdDepths = null;
+    if (simd) {
+      try {
+        simdDepths = simd.depths(positions, motion, trbfCenter, vertexCount, applyMotion, currentTime, viewProj);
+      } catch {
+        simd = null; // Memory limits must not break rendering.
       }
-      let depth = ((viewProj[2] * x + viewProj[6] * y + viewProj[10] * z) * 4096) | 0;
+    }
+    for (let i = 0; i < vertexCount; i++) {
+      let depth;
+      if (simdDepths) {
+        // ToInt32, including modulo 2^32 and NaN/Inf -> 0, stays in JS.
+        depth = simdDepths[i] | 0;
+        simdDepths[i] = depth;
+      } else {
+        let x = positions[3 * i + 0], y = positions[3 * i + 1], z = positions[3 * i + 2];
+        if (applyMotion) {
+          // E5: 加上 motion polynomial 给出的当前 t 下的位置。每帧重算保持跟 STG CUDA
+          // rasterizer 同款 motion-evolved 排序。
+          // 索引: motion[9i+0..2]=linear (motion_0..2), [3..5]=quadratic (motion_3..5),
+          //       [6..8]=cubic (motion_6..8). 与 shader 中 tpos 公式 (line 48) 对应.
+          const dt = currentTime - trbfCenter[i];
+          const dt2 = dt * dt;
+          const dt3 = dt2 * dt;
+          const b = 9 * i;
+          x += motion[b + 0] * dt + motion[b + 3] * dt2 + motion[b + 6] * dt3;
+          y += motion[b + 1] * dt + motion[b + 4] * dt2 + motion[b + 7] * dt3;
+          z += motion[b + 2] * dt + motion[b + 5] * dt2 + motion[b + 8] * dt3;
+        }
+        depth = ((viewProj[2] * x + viewProj[6] * y + viewProj[10] * z) * 4096) | 0;
+      }
       sizeList[i] = depth;
       if (depth > maxDepth) maxDepth = depth;
       if (depth < minDepth) minDepth = depth;
@@ -101,11 +166,12 @@ function createWorker(self) {
     // counts0 是累加器 → 复用前必须清零；starts0 下面被两分支之一完整覆写 → 复用不必清零。
     if (!scratchCounts0) scratchCounts0 = new Uint32Array(256 * 256); else scratchCounts0.fill(0);
     const counts0 = scratchCounts0;
+    const quantized = simdDepths ? simd.quantize(minDepth, depthInv) : null;
     for (let i = 0; i < vertexCount; i++) {
       // 桶下标必须落在 [0, 65535]。最远点 depth==maxDepth 时原式得 65536（越界 → counts0/starts0
       // 越界读写被静默忽略 → 该点漏计漏放 → total<vertexCount → 复用的 depthIndex 末尾留旧值 → 最近端
       // 渲染出错帧的残留点）。故 clamp 到 65535；同时 clamp 下界 0 防浮点误差致 depth<minDepth 出负下标。
-      sizeList[i] = Math.max(0, Math.min(65535, ((sizeList[i] - minDepth) * depthInv) | 0));
+      sizeList[i] = Math.max(0, Math.min(65535, (quantized ? quantized[i] : (sizeList[i] - minDepth) * depthInv) | 0));
       counts0[sizeList[i]]++;
     }
 
@@ -281,7 +347,8 @@ function createWorker(self) {
  * 创建深度排序 Worker
  */
 export function createDepthWorker() {
-  const workerCode = `(${createWorker.toString()})(self);`;
+  const wasmUrl = new URL('./depth-sort.wasm', import.meta.url).href;
+  const workerCode = `${createSimdSorter.toString()}\n(${createWorker.toString()})(self, ${JSON.stringify(wasmUrl)});`;
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   return new Worker(URL.createObjectURL(blob));
 }
