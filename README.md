@@ -587,10 +587,15 @@ import { HoloRP } from '@holoengineruntime';
 
 ### Optional lossy GS cutoffs
 
-`HoloRP.setQuadTailSigma(sigma)` controls only fragment tail discard for 4DGS/3DGS:
+`HoloRP.setQuadTailSigma(sigma)` controls fragment tail discard and quad coverage for 4DGS/3DGS:
 `A < -sigma²`, default `2` (`-4.0`), homepage `1.5` (`-2.25`). Valid radius is
 `0 < sigma <= 2` (larger values clamp to 2; invalid values reset to 2). Vertex
-quad expansion, covariance and axis lengths are unchanged.
+positions and their Gaussian-coordinate varying scale together by `sigma / 2`,
+after the existing axis clamp; covariance and axis lengths are unchanged.
+The default sigma 2 bypasses scaling. At sigma 1.5, quad area is 0.5625 of the
+original. The Gaussian-coordinate circle remains inscribed in the quad, so
+interior weights are mathematically unchanged. GPU interpolation rounding and
+rasterization edge rules still require device image comparisons for bitwise parity.
 `HoloRP.setMotionAlphaCutoff(cutoff)` controls 4D temporal opacity
 `mix(1.0, topacity, scaleT)`, default `0.02`, homepage `0.05`; finite values clamp
 to [0, 1], invalid values reset to 0.02. It is independent of

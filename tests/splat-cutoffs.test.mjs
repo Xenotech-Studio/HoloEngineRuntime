@@ -65,3 +65,37 @@ test('both shader tails use the radius squared; only 4D culls temporal opacity',
     assert.ok(hook.includes(`getUniformLocation(${program}, 'quadTailSigma')`));
   }
 });
+
+test('quad scaling preserves default coordinates and the Gaussian mapping after axis clamping', () => {
+  for (const name of ['splatShaders', 'gaussian3dShaders']) {
+    const source = read(`../src/shaders/${name}.js`);
+    const vertex = source.slice(0, source.indexOf('export const fragmentShader'));
+    assert.match(vertex, /uniform float quadTailSigma;/);
+    const scale = vertex.match(/float quadScale = quadTailSigma \/ ([\d.]+);/);
+    assert.ok(scale);
+    const divisor = Number(scale[1]);
+    assert.equal(2 / divisor, 1);
+    assert.equal(1.5 / divisor, 0.75);
+    assert.match(vertex, /vec2 quadPosition = position;\s*float quadScale = quadTailSigma \/ 2.0;\s*if \(quadTailSigma != 2.0\) \{\s*quadPosition = position \* quadScale;\s*\}/);
+    assert.ok(vertex.indexOf('min(sqrt(2.0 * lambda2), 1024.0)') < vertex.indexOf('float quadScale'));
+    assert.match(vertex, /quadPosition.x \* majorAxis \/ viewport/);
+    assert.match(vertex, /quadPosition.y \* minorAxis \/ viewport/);
+    assert.match(vertex, /vPosition = quadPosition;/);
+    // At a fixed screen point, interpolation recovers the same Gaussian
+    // coordinate whether the endpoints are +/-2 or +/-sigma.
+    for (const sigma of [2, 1.5]) {
+      const k = sigma / divisor;
+      const radius = 2 * k;
+      assert.equal(radius, sigma);
+      for (const axis of [12, 1024]) {
+        for (const coordinate of [-1, -0.5, 0, 0.5, 1]) {
+          const screen = coordinate * axis;
+          const t = (screen + radius * axis) / (2 * radius * axis);
+          const interpolated = -radius * (1 - t) + radius * t;
+          assert.ok(Math.abs(interpolated - coordinate) < 1e-12);
+          assert.ok(Math.abs(Math.exp(-(interpolated ** 2)) - Math.exp(-(coordinate ** 2))) < 1e-12);
+        }
+      }
+    }
+  }
+});

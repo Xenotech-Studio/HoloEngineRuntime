@@ -21,6 +21,7 @@ export const vertexShader3DGSSource = `
   in int index;
   
   out vec4 vColor;
+  uniform float quadTailSigma;
   out vec2 vPosition;
   
   vec3 evaluateSH(int degree, vec3 dir) {
@@ -122,12 +123,19 @@ export const vertexShader3DGSSource = `
 
       vec2 vCenter = vec2(pos_proj) / pos_proj.w;
       float depthNDC = pos_proj.z / pos_proj.w;
+      // Shrink after the axis clamp, preserving the original Gaussian footprint.
+      // Keep the default path free of scaling; geometry and varying must agree.
+      vec2 quadPosition = position;
+      float quadScale = quadTailSigma / 2.0;
+      if (quadTailSigma != 2.0) {
+          quadPosition = position * quadScale;
+      }
       gl_Position = vec4(
           vCenter 
-          + position.x * majorAxis / viewport 
-          + position.y * minorAxis / viewport, depthNDC, 1.0);
+          + quadPosition.x * majorAxis / viewport
+          + quadPosition.y * minorAxis / viewport, depthNDC, 1.0);
 
-      vPosition = position;
+      vPosition = quadPosition;
   }
 `.trim();
 

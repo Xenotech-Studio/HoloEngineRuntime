@@ -211,7 +211,7 @@ export class HoloRP {
     this.depthRangeNear = 10.0;      // 近处深度范围（米），用于调整颜色渐变的起始距离
     this.depthGamma = 1.5;           // Gamma 值，用于调整映射曲线的非线性程度（>1 时增强近处，<1 时增强远处）
     this.colorOnlyPass = false; // Explicit opt-in: no depth/stencil consumers.
-    this.quadTailSigma = 2; // Fragment tail radius only; vertex quad stays unchanged.
+    this.quadTailSigma = 2; // Tail radius shared by fragment cutoff and vertex quad.
     this.motionAlphaCutoff = 0.02; // 4D temporal opacity, not depth opacity.
     this.depthWritePassEnabled = true; // 默认保留与 mesh/点云混合时所需的 GS 深度
     this.depthOpacityThreshold = 0.13; // 深度写入的像素不透明度阈值（0.0-1.0），过滤当前像素的透明度，默认0.13
