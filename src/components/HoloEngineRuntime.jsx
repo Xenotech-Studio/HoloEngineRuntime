@@ -47,6 +47,7 @@ export default function HoloEngineRuntime({
   // Opt-in: existing COLMAP/editor consumers retain continuous rendering.
   suspended = false,
   redrawVersion = 0,
+  ssaaFactor = 3,
   showGrid,
   showAxes
 }) {
@@ -119,6 +120,7 @@ export default function HoloEngineRuntime({
     
     // 创建 Canvas 渲染目标
     const renderTarget = new CanvasRenderTarget(canvasRef.current, gl);
+    renderTarget.setSsaaFactor(ssaaFactor);
     renderTarget.setRenderScale(renderScaleRef.current);
     renderTargetRef.current = renderTarget;
     invalidateRef.current();
@@ -134,6 +136,11 @@ export default function HoloEngineRuntime({
       }
     };
   }, [gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes]);
+
+  useEffect(() => {
+    renderTargetRef.current?.setSsaaFactor(ssaaFactor);
+    invalidateRef.current();
+  }, [ssaaFactor]);
 
   // 单独更新 FOV（不重新创建渲染管线）
   // FOV 仅存在 Camera.targetVerticalFOV；HoloRP 用其 projectionMatrix getter
