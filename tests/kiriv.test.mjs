@@ -187,3 +187,16 @@ test('formula degeneracy: FTGS == zero-higher-order STG except alpha floor',()=>
   }
   assert.equal(evaluateKiriVRecord(a,'freetimegs',100,0.0001).opacity,0.0001);
 });
+test('degenerate zero velocity/single frame, narrow sigma and STG temporal cutoff boundary',()=>{
+  const h=baseHeader(); h.time.n_frames=1;
+  const raw=record(); raw.fill(0,13,26); raw[12]=-20;
+  const a=parseKiriV(file(h,raw)).buffer;
+  for(const t of [0,.5,1,a[11],a[11]-a[12]/Math.SQRT2,a[11]+a[12]/Math.SQRT2]) {
+    const result=evaluateKiriVRecord(a,'freetimegs',t,0.0001);
+    assert.deepEqual(result.position,[1,2,3]); assert.ok(Number.isFinite(result.opacity));
+  }
+  assert.equal(evaluateKiriVRecord(a,'freetimegs',a[11],0.0001).weight,1);
+  const b=parseKiriV(file()).buffer;
+  const t=b[11]+b[12]*Math.sqrt(-Math.log(.02));
+  assert.ok(Math.abs(evaluateKiriVRecord(b,'stg',t).weight-.02)<1e-15);
+});
