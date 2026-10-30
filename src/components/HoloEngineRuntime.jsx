@@ -4,6 +4,7 @@ import { useSplatLoader } from '../hooks/useSplatLoader';
 import { useFpsCameraControl } from '../hooks/useFpsCameraControl';
 import { useOrbitCameraControl } from '../hooks/useOrbitCameraControl';
 import { loadAndSetupSplatObject } from '../utils/splatObjectLoader';
+import { isPlyUrl, plyRenderType } from '../utils/ftgsPly.js';
 import { loadAndSetupMeshObject } from '../utils/meshLoader';
 import { getViewMatrix, createTransformMatrix, getProjectionMatrix, calculateDynamicFocal, multiply4, getGLErrorName } from '../core/utils/webgl';
 import { Camera } from '../core/utils/Camera';
@@ -404,7 +405,7 @@ export default function HoloEngineRuntime({
     // 更新渲染对象的资源（如果场景对象已加载）
     if (sceneObj.loaded) {
       // 根据asset的type字段判断类型（优先），如果没有type则根据文件扩展名推断
-      let objType = sceneObj.type;
+      let objType = sceneObj.plyRenderType || sceneObj.type;
       if (!objType) {
         // 向后兼容：根据文件扩展名推断
         if (sceneObj.modelUrl && (sceneObj.modelUrl.endsWith('.obj') || sceneObj.modelUrl.endsWith('.OBJ'))) {
@@ -445,6 +446,7 @@ export default function HoloEngineRuntime({
       } else {
         // 4DGS 对象（默认）
         renderObj.renderType = RenderType['4DGS'];
+        renderObj.ftgsMetadata = sceneObj.ftgsMetadata;
         for (const key of ['gaussStridePixels', 'precisionVariant', 'representation', 'colorEncoding', 'shDegree', 'opacityFloor', 'kirivHeader', 'gaussianCount', 'textureWidth', 'textureHeight']) renderObj[key] = sceneObj[key];
         renderObj.texture = sceneObj.texture;
         renderObj.indexBuffer = sceneObj.indexBuffer;
@@ -595,6 +597,9 @@ export default function HoloEngineRuntime({
       
       for (const obj of objects) {
         if (obj.loaded || obj.loading) continue;
+        // A reloaded object may now refer to another source format.
+        delete obj.plyRenderType;
+        delete obj.ftgsMetadata;
         
         obj.loading = true;
         loadingRef.current.add(obj.id);
@@ -637,20 +642,24 @@ export default function HoloEngineRuntime({
               
               checkAllLoaded();
             }
-          } else if (objType === '3dgs') {
-            // 加载 3DGS PLY 对象
+          } else if (objType === '3dgs' || isPlyUrl(obj.modelUrl)) {
+            // PLY is an input format, not a static render-type guarantee. This
+            // also permits explicitly requested 4dgs + native .ftgs.ply URLs.
             const { loadPlyFile } = await import('../hooks/usePlyLoader');
             const textureData = await loadPlyFile(obj.modelUrl);
             
             if (textureData && gl) {
+              obj.plyRenderType = plyRenderType(textureData);
+              obj.ftgsMetadata = textureData.ftgsMetadata;
               const { loadAndSetup3DGSObject } = await import('../utils/ply3dgsLoader');
-              const { worker } = loadAndSetup3DGSObject({
+              const setupPlyObject = obj.plyRenderType === '4dgs' ? loadAndSetupSplatObject : loadAndSetup3DGSObject;
+              const { worker } = setupPlyObject({
                 gl,
                 textureData,
                 targetObject: obj,
                 onFirstDepthSort: (vertexCount) => {
                   workerReadyRef.current.set(obj.id, true);
-                  console.log(`[HoloEngineRuntime] 3DGS Worker 第一次深度排序完成: ${obj.id.substring(0, 8)}... (${vertexCount} 顶点)`);
+                  console.log(`[HoloEngineRuntime] ${obj.plyRenderType === '4dgs' ? 'FTGS 4DGS' : '3DGS'} Worker 第一次深度排序完成: ${obj.id.substring(0, 8)}... (${vertexCount} 顶点)`);
                   // Like 4DGS, publish asynchronous readiness to the existing
                   // render object; no scene/React update is required to draw it.
                   const renderObj = renderPipelineRef.current?.getObject(obj.id);
@@ -673,10 +682,10 @@ export default function HoloEngineRuntime({
               loadingRef.current.delete(obj.id);
               
               // 打印3DGS加载统计信息
-              const sourceVertexCount = textureData.vertices ? textureData.vertices.length : 0;
+              const sourceVertexCount = textureData.gaussianCount ?? (textureData.vertices ? textureData.vertices.length : 0);
               const textureSize = `${textureData.width}x${textureData.height}`;
               const actualVertexCount = obj.vertexCount || 0;
-              console.log(`[HoloEngineRuntime] 3DGS 加载完成: ${obj.id.substring(0, 8)}...`, {
+              console.log(`[HoloEngineRuntime] ${obj.plyRenderType === '4dgs' ? 'FTGS 4DGS' : '3DGS'} 加载完成: ${obj.id.substring(0, 8)}...`, {
                 源文件总点数: sourceVertexCount,
                 实际渲染点数: actualVertexCount,
                 纹理尺寸: textureSize,

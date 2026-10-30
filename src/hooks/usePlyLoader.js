@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
+import { parseFtgsPly } from '../utils/ftgsPly.js';
 
 /**
  * 解析PLY文件header
@@ -128,6 +129,8 @@ function convertPlyToTextureData(vertices, header) {
     const rot3Half = floatToHalf(v.rot_3 || 0);
     textureData[baseIndex + 4] = (rot3Half << 16) | rot2Half;
 
+    // Standard 3DGS/FTGS f_dc is SH DC: RGB=0.5+C0*f_dc.
+    // STG's same-named RGB/decoder features have different semantics.
     const SH_C0 = 0.28209479177387814;
     let r = 0, g = 0, b = 0, a = 0;
     if (v.f_dc_0 !== undefined) {
@@ -166,13 +169,18 @@ function convertPlyToTextureData(vertices, header) {
 /**
  * 独立加载 PLY 文件（无 React 状态，供动态 import 等场景使用）
  * @param {string} url - PLY 文件 URL
- * @returns {Promise<Object>} 纹理数据 { data, width, height, buffer, vertices, sphericalHarmonicsDegree }
+ * @returns {Promise<Object>} Static data includes vertices; native FTGS returns
+ * representation=freetimegs, gaussianCount, ftgsMetadata and float 4D/SH data.
  */
 export async function loadPlyFile(url) {
   const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText} - Unable to load ${url}`);
 
   const arrayBuffer = await response.arrayBuffer();
+  // Content determines temporal representation. A normal PLY returns null and
+  // continues through the original static 3DGS decoder below, unchanged.
+  const ftgs = parseFtgsPly(arrayBuffer, url);
+  if (ftgs) return ftgs;
   const dataView = new DataView(arrayBuffer);
   const textDecoder = new TextDecoder();
   const maxHeaderSize = Math.min(8192, arrayBuffer.byteLength);
@@ -210,7 +218,7 @@ export function usePlyLoader() {
     try {
       const textureData = await loadPlyFile(url);
       textureRef.current = textureData;
-      setVertexCount(textureData.vertices?.length ?? 0);
+      setVertexCount(textureData.gaussianCount ?? textureData.vertices?.length ?? 0);
       setLoading(false);
       return textureData;
     } catch (err) {
