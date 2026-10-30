@@ -64,7 +64,7 @@ function createWorker(self) {
     const sizeList = scratchSizeList;
     // 注意: 这里不要再声明 hasMotion 同名 const, 会跟外层 hasMotion 撞 TDZ -> 整个
     // runSort 抛 ReferenceError -> worker 永远不出 depthIndex -> 黑屏.
-    const applyMotion = useMotionEvolvedSort && motion && trbfCenter;
+    const applyMotion = useMotionEvolvedSort && hasMotion && motion && trbfCenter;
     for (let i = 0; i < vertexCount; i++) {
       let x = positions[3 * i + 0], y = positions[3 * i + 1], z = positions[3 * i + 2];
       if (applyMotion) {

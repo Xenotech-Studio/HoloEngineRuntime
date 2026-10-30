@@ -214,6 +214,7 @@ export function useWebGL(canvasRef, options = {}) {
         depthOpacityThreshold: glContext.getUniformLocation(shaderProgram, 'depthOpacityThreshold'),
         centerOpacityThreshold: glContext.getUniformLocation(shaderProgram, 'centerOpacityThreshold'),
         depthWriteOnly: glContext.getUniformLocation(shaderProgram, 'depthWriteOnly'),
+        colorOnlyPass: glContext.getUniformLocation(shaderProgram, 'colorOnlyPass'),
       };
 
       attributesRef.current = {
@@ -237,6 +238,7 @@ export function useWebGL(canvasRef, options = {}) {
         depthOpacityThreshold: glContext.getUniformLocation(shaderProgram3DGS, 'depthOpacityThreshold'),
         centerOpacityThreshold: glContext.getUniformLocation(shaderProgram3DGS, 'centerOpacityThreshold'),
         depthWriteOnly: glContext.getUniformLocation(shaderProgram3DGS, 'depthWriteOnly'),
+        colorOnlyPass: glContext.getUniformLocation(shaderProgram3DGS, 'colorOnlyPass'),
       };
 
       attributes3DGSRef.current = {

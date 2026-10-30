@@ -3,10 +3,11 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-function workerHarness(moving = false) {
+function workerHarness(moving = false, forceZeroMotionMath = false) {
   const messages = [], tasks = [];
-  const self = { postMessage: m => messages.push(m) };
-  const source = readFileSync(new URL('../src/utils/depthWorker.js', import.meta.url), 'utf8');
+  const self = { postMessage: (m, transfer = []) => messages.push(structuredClone(m, { transfer })) };
+  let source = readFileSync(new URL('../src/utils/depthWorker.js', import.meta.url), 'utf8');
+  if (forceZeroMotionMath) source = source.replace('&& hasMotion && motion', '&& motion');
   vm.runInNewContext(source.slice(0, source.indexOf('export function createDepthWorker')) + '\ncreateWorker(self);', {
     self, Float32Array, Uint32Array, Int32Array, Math, Date, setTimeout: fn => tasks.push(fn),
   });
@@ -100,7 +101,7 @@ export function handlerHarness() {
   vm.runInContext(source + '\nthis.handler = createStandardWorkerMessageHandler;', context);
   const handler = context.handler({ gl, indexBuffer: {}, targetObject });
   return { targetObject, uploads, returned,
-    send: data => handler({ data, target: { postMessage: m => returned.push(m) } }),
+    send: data => handler({ data, target: { postMessage: (m, transfer) => returned.push(structuredClone(m, { transfer })) } }),
     flush: () => targetObject.flushSortResult?.(),
   };
 }
@@ -118,4 +119,65 @@ test('indices and snapshot commit as one version; incompatible reuse is rejected
   h.flush();
   assert.equal(h.targetObject.acceptedSort.snapshot.time, 0.7);
   assert.equal(h.uploads.length, 1);
+});
+
+test('static motion bypass produces the same indices as zero-coefficient polynomial', () => {
+  const fast = workerHarness(false), original = workerHarness(false, true);
+  for (const [angle, time] of [[0, 0], [0.02, 0.5], [1, 1], [2, -100], [3, 100]]) {
+    assert.deepEqual([...fast.request(angle, time).depthIndex], [...original.request(angle, time).depthIndex]);
+  }
+});
+
+test('burst coalesces to one upload; superseded and stale buffers return immediately', () => {
+  const h = handlerHarness();
+  const result = id => ({ snapshot: { requestId: id, time: id / 10, view: [id] },
+    requestId: id, orderId: id, vertexCount: 2, depthIndex: new Uint32Array([id, 0]) });
+  h.send(result(1)); h.send(result(2)); h.send(result(3));
+  assert.equal(h.uploads.length, 0);
+  assert.equal(h.returned.length, 2);
+  h.send({ requestId: 4, orderId: 3, vertexCount: 2, snapshot: { requestId: 4, time: 0.4, view: [4] } });
+  h.flush(); h.flush();
+  assert.deepEqual(h.uploads, [[3, 0]]);
+  assert.equal(h.targetObject.acceptedSort.snapshot.requestId, 4);
+  assert.equal(h.targetObject.acceptedSort.orderId, 3);
+  assert.equal(h.returned.length, 3);
+  h.send(result(2)); h.flush();
+  assert.equal(h.returned.length, 4);
+  assert.equal(h.uploads.length, 1);
+});
+
+test('color-only early exit cannot leak into mixed or depth-consuming passes', () => {
+  const { Pipeline, identity4 } = loadPipeline();
+  const values = [], masks = [];
+  const pipeline = Object.create(Pipeline.prototype);
+  pipeline.gl = new Proxy({ uniform1i: (name, value) => { if (name === 'colorOnly') values.push(value); },
+    stencilMask: value => masks.push(value) }, { get: (target, key) => target[key] || (() => {}) });
+  pipeline._frameSnapshots = new Map(); pipeline._frameTargetTime = 0.5;
+  pipeline._singleView = true; pipeline.colorOnlyPass = true;
+  pipeline._renderSplat = () => {};
+  const object = { getModelMatrix: identity4 };
+  pipeline.objects = new Map([['gs', object]]);
+  const draw = () => pipeline._renderGSObjects([object], identity4(), identity4(), null, {},
+    { colorOnlyPass: 'colorOnly' }, {}, { viewport: { width: 100, height: 100 } }, true);
+  pipeline.depthWritePassEnabled = false; draw();
+  pipeline.depthWritePassEnabled = true; draw();
+  pipeline.depthWritePassEnabled = false; pipeline.objects.set('mesh', {}); draw();
+  assert.deepEqual(values, [1, 0, 0]);
+  assert.deepEqual(masks, [0, 255, 255]);
+});
+
+test('recreated render objects keep monotonically increasing worker-owned request IDs', () => {
+  const { Pipeline, identity4 } = loadPipeline();
+  const pipeline = Object.create(Pipeline.prototype);
+  pipeline.gl = new Proxy({}, { get: () => () => {} });
+  pipeline._singleView = true; pipeline._renderSplat = () => {};
+  const owner = {}, sent = [];
+  const worker = { postMessage: message => sent.push(message) };
+  const draw = time => {
+    pipeline._frameTargetTime = time; pipeline._frameSnapshots = new Map();
+    pipeline._renderGSObjects([{ sortSource: owner, worker, getModelMatrix: identity4 }],
+      identity4(), identity4(), null, {}, {}, {}, { viewport: { width: 100, height: 100 } }, true);
+  };
+  draw(0.2); draw(0.3);
+  assert.deepEqual(sent.map(message => message.snapshot.requestId), [1, 2]);
 });

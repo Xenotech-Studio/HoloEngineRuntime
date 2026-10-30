@@ -36,42 +36,65 @@ export function calculateVertexCount(buffer, gaussStridePixels = 4) {
 
 export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObject, onFirstDepthSort, onError }) {
   let firstDepthSortReceived = false;
-  return (e) => {
-    if (e.data.sortInvalidated && targetObject) targetObject._sortInvalidated = true;
-    if (!e.data.snapshot || !indexBuffer) return;
-    const result = e.data;
-    const accepted = targetObject?.acceptedSort;
-    if (result.requestId <= (accepted?.snapshot.requestId || 0)) return;
-    if (!result.depthIndex) {
-      if (accepted?.orderId === result.orderId) targetObject.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
-      return;
+  let pending = null;
+  const target = targetObject || {};
+  target.acceptedSort = null;
+  target.ready = false;
+  target._sortInvalidated = true;
+
+  const recycle = result => {
+    const buffer = result?.depthIndex?.buffer;
+    if (buffer?.byteLength && result.worker?.postMessage) {
+      result.worker.postMessage({ returnedDepthBuffer: buffer }, [buffer]);
     }
-    const { depthIndex, vertexCount } = e.data;
+  };
+
+  // Called once per object at the display-frame boundary, never from onmessage.
+  target.flushSortResult = () => {
+    if (!pending) return;
+    const result = pending;
+    pending = null;
     const shouldLog = typeof window !== 'undefined' && window.enableAssetPreviewDebugLogs;
-    if (shouldLog && targetObject) {
-      targetObject._lastDepthIndices = new Uint32Array(depthIndex);
+    if (result.depthIndex) {
+      if (shouldLog) target._lastDepthIndices = new Uint32Array(result.depthIndex);
+      gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, result.depthIndex, gl.DYNAMIC_DRAW);
+      recycle(result);
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
-    // 上传完成后把 depthIndex 的 ArrayBuffer transfer 回 worker 复用（消除每帧 ~N*4B 的主线程垃圾 → GC 抖动）。
-    // gl.bufferData 已同步把数据拷进 GPU，此处 detach 安全；transfer 后本线程不得再碰 depthIndex（已 detach）。
-    try {
-      const buf = depthIndex.buffer;
-      if (buf && buf.byteLength > 0 && e.target && typeof e.target.postMessage === 'function') {
-        e.target.postMessage({ returnedDepthBuffer: buf }, [buf]);
-      }
-    } catch { /* 回收失败无妨，退化为每帧新分配 */ }
-    if (targetObject) {
-      targetObject.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
-      targetObject.vertexCount = vertexCount;
-      if (!firstDepthSortReceived) targetObject.ready = true;
+    target.acceptedSort = { snapshot: result.snapshot, orderId: result.orderId };
+    target.vertexCount = result.vertexCount;
+    target.ready = true;
+    // Synchronous driver queries are diagnostic-only on the production hot path.
+    if (shouldLog) {
+      const err = gl.getError();
+      if (err !== gl.NO_ERROR && onError) onError(err, getGLErrorName(gl, err));
     }
-    const err = gl.getError();
-    if (err !== gl.NO_ERROR && onError) onError(err, getGLErrorName(gl, err));
-    if (!firstDepthSortReceived && onFirstDepthSort) {
+    if (!firstDepthSortReceived) {
       firstDepthSortReceived = true;
-      onFirstDepthSort(vertexCount);
+      onFirstDepthSort?.(result.vertexCount);
     }
+  };
+
+  return (e) => {
+    if (e.data.sortInvalidated) target._sortInvalidated = true;
+    if (!e.data.snapshot || !indexBuffer) return;
+    const result = { ...e.data, worker: e.target };
+    const latestId = pending?.snapshot.requestId ?? target.acceptedSort?.snapshot.requestId ?? 0;
+    if (result.requestId <= latestId) { recycle(result); return; }
+    if (!result.depthIndex) {
+      // An acknowledgement may advance time/view, but only with the exact order
+      // already uploaded or retained in pending. Never pair it with another order.
+      if (pending?.orderId === result.orderId) {
+        pending = { ...pending, snapshot: result.snapshot, requestId: result.requestId };
+      } else if (!pending && target.acceptedSort?.orderId === result.orderId) {
+        pending = result;
+      }
+    } else {
+      recycle(pending); // Superseded in-flight indices go straight back to the pool.
+      pending = result;
+    }
+    // Compatibility for callers without a render object/frame boundary.
+    if (!targetObject) target.flushSortResult();
   };
 }
 

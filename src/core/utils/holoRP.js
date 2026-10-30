@@ -210,6 +210,7 @@ export class HoloRP {
     this.depthRange = 30.0;          // 深度范围（米），用于映射，例如 30.0 表示关注 10-30 米范围
     this.depthRangeNear = 10.0;      // 近处深度范围（米），用于调整颜色渐变的起始距离
     this.depthGamma = 1.5;           // Gamma 值，用于调整映射曲线的非线性程度（>1 时增强近处，<1 时增强远处）
+    this.colorOnlyPass = false; // Explicit opt-in: no depth/stencil consumers.
     this.depthWritePassEnabled = true; // 默认保留与 mesh/点云混合时所需的 GS 深度
     this.depthOpacityThreshold = 0.13; // 深度写入的像素不透明度阈值（0.0-1.0），过滤当前像素的透明度，默认0.13
     this.centerOpacityThreshold = 0.65; // 深度写入的中心点不透明度阈值（0.0-1.0），过滤高斯点中心位置的透明度，默认0.65
@@ -451,7 +452,7 @@ export class HoloRP {
    * 渲染一帧
    * @param {RenderTarget} renderTarget - 渲染目标（Canvas 或 WebXR）
    * @param {Function} onBeforeRender - 渲染前的回调（可选，用于更新相机等）
-   * @param {Function} onUpdateWorker - 更新 Worker 的回调（可选，用于深度排序）
+   * @param {Function} onUpdateWorker - 排序请求已发送的观察回调（不可再次发送）
    * @param {XRFrame} frame - XR 帧（仅 XR 模式需要）
    * @param {string[]} objectOrder - 可选的对象ID顺序列表，如果提供则按此顺序渲染（用于匹配hierarchy顺序）
    */
@@ -581,13 +582,10 @@ export class HoloRP {
         gl.uniformMatrix4fv(this.uniforms.projection, false, projectionMatrix);
       }
       if (this.uniforms && this.uniforms.viewport) {
-        gl.uniform2fv(this.uniforms.viewport, new Float32Array([
-          viewInfo.viewport.width,
-          viewInfo.viewport.height
-        ]));
+        gl.uniform2f(this.uniforms.viewport, viewInfo.viewport.width, viewInfo.viewport.height);
       }
       if (this.uniforms && this.uniforms.focal) {
-        gl.uniform2fv(this.uniforms.focal, new Float32Array([viewInfo.fx, viewInfo.fy]));
+        gl.uniform2f(this.uniforms.focal, viewInfo.fx, viewInfo.fy);
       }
 
       if (viewMatrix && this.uniforms && this.uniforms.view) {
@@ -855,13 +853,10 @@ export class HoloRP {
       gl.uniformMatrix4fv(uniforms.projection, false, projectionMatrix);
     }
     if (uniforms.viewport) {
-      gl.uniform2fv(uniforms.viewport, new Float32Array([
-        viewInfo.viewport.width,
-        viewInfo.viewport.height
-      ]));
+      gl.uniform2f(uniforms.viewport, viewInfo.viewport.width, viewInfo.viewport.height);
     }
     if (uniforms.focal) {
-      gl.uniform2fv(uniforms.focal, new Float32Array([viewInfo.fx, viewInfo.fy]));
+      gl.uniform2f(uniforms.focal, viewInfo.fx, viewInfo.fy);
     }
     if (uniforms.view && viewMatrix) {
       gl.uniformMatrix4fv(uniforms.view, false, viewMatrix);
@@ -901,13 +896,16 @@ export class HoloRP {
     // 为每个点云分配不同的stencil值，并渲染
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
+      const sortOwner = obj.sortSource || obj;
       let snapshot = this._frameSnapshots.get(obj);
       if (!snapshot) {
+        sortOwner.flushSortResult?.();
         const model = Array.from(obj.getModelMatrix());
         const view = Array.from(viewMatrix);
         const projection = Array.from(projectionMatrix);
         snapshot = {
-          requestId: obj._nextSortRequestId = (obj._nextSortRequestId || 0) + 1,
+          // IDs belong to the worker owner, surviving render-object recreation.
+          requestId: sortOwner._nextSortRequestId = (sortOwner._nextSortRequestId || 0) + 1,
           time: is4DGS ? this._frameTargetTime : 0.5,
           sortStrategy: obj.sortStrategy || 'back-to-front',
           model, view, projection,
@@ -916,19 +914,19 @@ export class HoloRP {
           fx: viewInfo.fx, fy: viewInfo.fy,
         };
         this._frameSnapshots.set(obj, snapshot);
-        const previous = obj._lastRequestedSnapshot;
-        const changed = (obj.sortSource || obj)._sortInvalidated || !previous || ['time', 'sortStrategy', 'width', 'height', 'fx', 'fy'].some(key => snapshot[key] !== previous[key])
+        const previous = sortOwner._lastRequestedSnapshot;
+        const changed = sortOwner._sortInvalidated || !previous || ['time', 'sortStrategy', 'width', 'height', 'fx', 'fy'].some(key => snapshot[key] !== previous[key])
           || ['model', 'view', 'projection'].some(key => snapshot[key].some((value, index) => value !== previous[key][index]));
         if (obj.worker && changed) {
-          (obj.sortSource || obj)._sortInvalidated = false;
-          obj._lastRequestedSnapshot = snapshot;
+          sortOwner._sortInvalidated = false;
+          sortOwner._lastRequestedSnapshot = snapshot;
           obj.worker.postMessage({ view: snapshot.viewProj, time: snapshot.time,
             snapshot, sortStrategy: snapshot.sortStrategy });
           // Observer only: the pipeline is the sole sender of sort requests.
           if (onUpdateWorker) onUpdateWorker(obj.id, obj.worker, snapshot.viewProj, snapshot.time);
         }
       }
-      const accepted = (obj.sortSource || obj).acceptedSort?.snapshot;
+      const accepted = sortOwner.acceptedSort?.snapshot;
       // Canvas draws the complete accepted version. XR retains per-eye camera
       // matrices; both eyes share the single first-eye sorting request.
       const draw = this._singleView && accepted ? accepted : snapshot;
@@ -940,7 +938,12 @@ export class HoloRP {
       const stencilValue = i + 1;
       
       gl.stencilFunc(gl.ALWAYS, stencilValue, 0xFF);
-      gl.stencilMask(0xFF);
+      // This opt-in is restricted to an isolated color-only GS canvas. Mixed
+      // mesh/point-cloud paths retain their existing stencil/depth semantics.
+      const colorOnly = this.colorOnlyPass && !this.depthWritePassEnabled
+        && this.objects.size === 1 && !this.showDepthVisualization;
+      gl.stencilMask(colorOnly ? 0 : 0xFF);
+      if (uniforms.colorOnlyPass != null) gl.uniform1i(uniforms.colorOnlyPass, colorOnly ? 1 : 0);
       
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
@@ -950,7 +953,7 @@ export class HoloRP {
       }
       gl.depthFunc(gl.LEQUAL);
       gl.depthMask(false);
-      // 颜色遍始终更新 worker 的 view/time，关闭深度遍不会中断排序或动画。
+      // 两遍共享上面提交的快照；绘制不再生成 time 或发送排序请求。
       this._renderSplat(obj, draw.model, program, uniforms, attributes, is4DGS);
 
       // 第二遍为与 mesh/点云混合提供 GS 深度；首页仅有单个 GS，可省去此遍。

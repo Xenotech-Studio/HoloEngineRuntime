@@ -10,6 +10,9 @@ export const vertexShader3DGSSource = `
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
+  uniform bool depthWriteOnly;
+  uniform bool colorOnlyPass;
+  uniform float centerOpacityThreshold;
   uniform int sphericalHarmonicsDegree;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
@@ -37,6 +40,24 @@ export const vertexShader3DGSSource = `
   
       float clip = 1.2 * pos_proj.w;
       if (pos_proj.z < -clip || pos_proj.x < -clip || pos_proj.x > clip || pos_proj.y < -clip || pos_proj.y > clip) return;
+
+      uint rgba = static1.w;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float aEff = mix(1.0, splat.a, scaleT);
+      // The fragment shader premultiplies RGB by the Gaussian alpha exactly once.
+      vColor = depthEff * vec4(splat.rgb, aEff);
+
+      // Same final center alpha and threshold as the fragment depth pass.
+      // In 4D scaleT=0 blends alpha to one; raw packed alpha is not sufficient.
+      if (depthWriteOnly && vColor.a < centerOpacityThreshold) return;
+      if (!depthWriteOnly && colorOnlyPass && vColor.a == 0.0) return;
 
       vec4 rot = vec4(unpackHalf2x16(static0.w).xy, unpackHalf2x16(static1.x).xy);
       vec3 gaussianScale = vec3(unpackHalf2x16(static1.y).xy, unpackHalf2x16(static1.z).x);
@@ -98,18 +119,6 @@ export const vertexShader3DGSSource = `
       vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
-      uint rgba = static1.w;
-      vec4 splat = vec4(
-          float((rgba) & 0xffu),
-          float((rgba >> 8) & 0xffu),
-          float((rgba >> 16) & 0xffu),
-          float((rgba >> 24) & 0xffu)
-      ) / 255.0;
-      float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
-      float depthEff = mix(1.0, depthF, scaleT);
-      float aEff = mix(1.0, splat.a, scaleT);
-      // The fragment shader premultiplies RGB by the Gaussian alpha exactly once.
-      vColor = depthEff * vec4(splat.rgb, aEff);
 
       vec2 vCenter = vec2(pos_proj) / pos_proj.w;
       float depthNDC = pos_proj.z / pos_proj.w;

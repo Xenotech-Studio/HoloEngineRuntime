@@ -12,6 +12,9 @@ export const vertexShaderSource = `
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
+  uniform bool depthWriteOnly;
+  uniform bool colorOnlyPass;
+  uniform float centerOpacityThreshold;
   uniform float time;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
@@ -71,6 +74,24 @@ export const vertexShaderSource = `
       float clip = 1.2 * pos.w;
       if (pos.z < -clip || pos.x < -clip || pos.x > clip || pos.y < -clip || pos.y > clip) return;
       uvec4 static1 = texelFetch(u_texture, gaussCoord(1u), 0);
+
+      uint rgba = static1.w;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos.z / pos.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float topacityEff = mix(1.0, topacity, scaleT);
+      float alphaEff = mix(1.0, splat.a, scaleT);
+      vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
+
+      // Same final center alpha and threshold as the fragment depth pass.
+      // In 4D scaleT=0 blends alpha to one; raw packed alpha is not sufficient.
+      if (depthWriteOnly && vColor.a < centerOpacityThreshold) return;
+      if (!depthWriteOnly && colorOnlyPass && vColor.a == 0.0) return;
 
       vec4 rot;
       vec3 gaussianScale;
@@ -143,18 +164,6 @@ export const vertexShaderSource = `
       vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
-      uint rgba = static1.w;
-      vec4 splat = vec4(
-          float((rgba) & 0xffu),
-          float((rgba >> 8) & 0xffu),
-          float((rgba >> 16) & 0xffu),
-          float((rgba >> 24) & 0xffu)
-      ) / 255.0;
-      float depthF = clamp(pos.z / pos.w + 1.0, 0.0, 1.0);
-      float depthEff = mix(1.0, depthF, scaleT);
-      float topacityEff = mix(1.0, topacity, scaleT);
-      float alphaEff = mix(1.0, splat.a, scaleT);
-      vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
 
       vec2 vCenter = vec2(pos) / pos.w;
       float depthNDC = pos.z / pos.w;
