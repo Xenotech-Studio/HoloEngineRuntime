@@ -584,3 +584,17 @@ import { HoloRP } from '@holoengineruntime';
 3. 用 `useWebGL`、`HoloRP`、`createPointCloudObject` / `createLinesObject` 等实现渲染；线段、点云等通过 `extendedOptions` 传入管线
 
 **优势**：功能集中、统一导入、便于复用。
+
+### Optional lossy GS cutoffs
+
+`HoloRP.setQuadTailSigma(sigma)` controls only fragment tail discard for 4DGS/3DGS:
+`A < -sigma²`, default `2` (`-4.0`), homepage `1.5` (`-2.25`). Valid radius is
+`0 < sigma <= 2` (larger values clamp to 2; invalid values reset to 2). Vertex
+quad expansion, covariance and axis lengths are unchanged.
+`HoloRP.setMotionAlphaCutoff(cutoff)` controls 4D temporal opacity
+`mix(1.0, topacity, scaleT)`, default `0.02`, homepage `0.05`; finite values clamp
+to [0, 1], invalid values reset to 0.02. It is independent of
+`centerOpacityThreshold` / `depthOpacityThreshold`; 3DGS has no temporal branch.
+The host `SplatPreviewer` exposes matching props; only the homepage opts in.
+Both GS fragment shaders use implicit fragment depth (the same gl_FragCoord.z
+previously assigned explicitly), retaining discard and depth-mask behavior.

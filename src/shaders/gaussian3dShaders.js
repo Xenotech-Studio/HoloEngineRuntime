@@ -142,11 +142,13 @@ export const fragmentShader3DGSSource = `
   uniform float centerOpacityThreshold;
   uniform bool depthWriteOnly;
   
+  // Tail radius in vPosition units: 2 sigma => A=-4; 1.5 sigma => A=-2.25.
+  uniform float quadTailSigma;
   out vec4 fragColor;
   
   void main () {
       float A = -dot(vPosition, vPosition);
-      if (A < -4.0) discard;
+      if (A < -(quadTailSigma * quadTailSigma)) discard;
       float B = exp(A) * vColor.a;
       
       if (depthWriteOnly) {
@@ -156,10 +158,8 @@ export const fragmentShader3DGSSource = `
           if (B < depthOpacityThreshold) {
               discard;
           }
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(0.0, 0.0, 0.0, 0.0);
       } else {
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(B * vColor.rgb, B);
       }
   }

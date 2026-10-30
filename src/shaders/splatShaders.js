@@ -14,6 +14,8 @@ export const vertexShaderSource = `
   uniform vec2 viewport;
   uniform bool depthWriteOnly;
   uniform bool colorOnlyPass;
+  // 4D temporal opacity cutoff; independent of depth opacity thresholds.
+  uniform float motionAlphaCutoff;
   uniform float centerOpacityThreshold;
   uniform float time;
   uniform float u_gaussianScaleLerp;
@@ -57,7 +59,7 @@ export const vertexShaderSource = `
       float dtOverScale = dt / trbf.y;
       float topacity = exp(-(dtOverScale * dtOverScale));
       float topacityCull = mix(1.0, topacity, scaleT);
-      if (topacityCull < 0.02) return;
+      if (topacityCull < motionAlphaCutoff) return;
 
       uvec4 motion0 = texelFetch(u_texture, gaussCoord(2u), 0);
       uvec4 static0 = texelFetch(u_texture, gaussCoord(0u), 0);
@@ -187,11 +189,13 @@ export const fragmentShaderSource = `
   uniform float centerOpacityThreshold;
   uniform bool depthWriteOnly;
   
+  // Tail radius in vPosition units: 2 sigma => A=-4; 1.5 sigma => A=-2.25.
+  uniform float quadTailSigma;
   out vec4 fragColor;
   
   void main () {
       float A = -dot(vPosition, vPosition);
-      if (A < -4.0) discard;
+      if (A < -(quadTailSigma * quadTailSigma)) discard;
       float B = exp(A) * vColor.a;
       
       if (depthWriteOnly) {
@@ -201,10 +205,8 @@ export const fragmentShaderSource = `
           if (B < depthOpacityThreshold) {
               discard;
           }
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(0.0, 0.0, 0.0, 0.0);
       } else {
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(B * vColor.rgb, B);
       }
   }

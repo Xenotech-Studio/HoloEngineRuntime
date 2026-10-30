@@ -211,6 +211,8 @@ export class HoloRP {
     this.depthRangeNear = 10.0;      // 近处深度范围（米），用于调整颜色渐变的起始距离
     this.depthGamma = 1.5;           // Gamma 值，用于调整映射曲线的非线性程度（>1 时增强近处，<1 时增强远处）
     this.colorOnlyPass = false; // Explicit opt-in: no depth/stencil consumers.
+    this.quadTailSigma = 2; // Fragment tail radius only; vertex quad stays unchanged.
+    this.motionAlphaCutoff = 0.02; // 4D temporal opacity, not depth opacity.
     this.depthWritePassEnabled = true; // 默认保留与 mesh/点云混合时所需的 GS 深度
     this.depthOpacityThreshold = 0.13; // 深度写入的像素不透明度阈值（0.0-1.0），过滤当前像素的透明度，默认0.13
     this.centerOpacityThreshold = 0.65; // 深度写入的中心点不透明度阈值（0.0-1.0），过滤高斯点中心位置的透明度，默认0.65
@@ -405,6 +407,16 @@ export class HoloRP {
    */
   setDepthGamma(gamma) {
     this.depthGamma = gamma !== undefined && gamma !== null ? Math.max(0.1, Math.min(5.0, gamma)) : 1.5;
+  }
+
+  /** Tail radius in vPosition units, capped at the existing 2-sigma quad. */
+  setQuadTailSigma(sigma) {
+    this.quadTailSigma = Number.isFinite(sigma) && sigma > 0 ? Math.min(2, sigma) : 2;
+  }
+
+  /** 4D temporal opacity cutoff, independent of center/depth opacity thresholds. */
+  setMotionAlphaCutoff(cutoff) {
+    this.motionAlphaCutoff = Number.isFinite(cutoff) ? Math.max(0, Math.min(1, cutoff)) : 0.02;
   }
 
   /** 设置 GS 深度第二遍；仅单个 GS、无 mesh/点云的首页可关闭以避免重复绘制。 */
@@ -867,6 +879,13 @@ export class HoloRP {
       gl.uniform1f(uniforms.time, this._frameTargetTime);
     }
     
+    if (uniforms.quadTailSigma !== undefined && uniforms.quadTailSigma !== null) {
+      gl.uniform1f(uniforms.quadTailSigma, this.quadTailSigma);
+    }
+    if (is4DGS && uniforms.motionAlphaCutoff !== undefined && uniforms.motionAlphaCutoff !== null) {
+      gl.uniform1f(uniforms.motionAlphaCutoff, this.motionAlphaCutoff);
+    }
+
     // 设置深度写入的不透明度阈值
     if (uniforms.depthOpacityThreshold !== undefined && uniforms.depthOpacityThreshold !== null) {
       gl.uniform1f(uniforms.depthOpacityThreshold, this.depthOpacityThreshold);
