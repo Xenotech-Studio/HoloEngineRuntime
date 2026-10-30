@@ -28,14 +28,14 @@ test('legacy defaults and explicit homepage cutoffs reach shader uniforms', () =
   assert.equal(values.get('tail'), 2);
   assert.equal(-(values.get('tail') ** 2), -4);
   assert.equal(values.get('motion'), 0.02);
-  pipeline.setQuadTailSigma(1.5);
+  pipeline.setQuadTailSigma(1.75);
   pipeline.setMotionAlphaCutoff(0.05);
   values = draw(true);
-  assert.equal(values.get('tail'), 1.5);
-  assert.equal(-(values.get('tail') ** 2), -2.25);
+  assert.equal(values.get('tail'), 1.75);
+  assert.equal(-(values.get('tail') ** 2), -3.0625);
   assert.equal(values.get('motion'), 0.05);
   values = draw(false);
-  assert.equal(values.get('tail'), 1.5);
+  assert.equal(values.get('tail'), 1.75);
   assert.equal(values.has('motion'), false);
   assert.equal(pipeline.depthOpacityThreshold, 0.13);
   assert.equal(pipeline.centerOpacityThreshold, 0.65);
