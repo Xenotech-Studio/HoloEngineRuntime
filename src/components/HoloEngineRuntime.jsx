@@ -445,6 +445,7 @@ export default function HoloEngineRuntime({
       } else {
         // 4DGS 对象（默认）
         renderObj.renderType = RenderType['4DGS'];
+        for (const key of ['gaussStridePixels', 'precisionVariant', 'representation', 'colorEncoding', 'shDegree', 'opacityFloor', 'kirivHeader', 'gaussianCount', 'textureWidth', 'textureHeight']) renderObj[key] = sceneObj[key];
         renderObj.texture = sceneObj.texture;
         renderObj.indexBuffer = sceneObj.indexBuffer;
         renderObj.vertexCount = sceneObj.vertexCount || 0;

@@ -189,7 +189,10 @@ hp_scale_rot->high. Existing texture padding and inferred count remain legacy
 behavior, including static 3DGS zero time width. A known legacy file's texture bytes,
 count, shader arithmetic and motion sorting must remain unchanged.
 Legacy files declaring non-STG, unknown layout/precision or incompatible stride
-are rejected. New readers accept both magic values. Old reader's explicit
+are rejected. Explicit legacy format_version must be 1; conflicting singular
+and plural representation tags fail. The converter removes only an all-zero
+suffix of legacy texture records (recording its count in losses); interior invalid
+records are rejected, never skipped. New readers accept both magic values. Old reader's explicit
 `magic!==0x674B` check rejects KRV2; renaming extensions cannot bypass it.
 
 V2 checks version/flags/tags, metadata types, integer multiplication and exact

@@ -996,17 +996,26 @@ export class HoloRP {
       // u_strideColMask / u_strideColShift / u_strideRowShift / u_useHpScaleRot uniforms 上.
       // 默认 stride=4 (lite), hp=false; obj.gaussStridePixels=8 + obj.precisionVariant='hp_scale_rot' 时切到 hp 路径.
       if (is4DGS) {
-        const strideP = obj.gaussStridePixels === 8 ? 8 : 4;
+        const kiriv = obj.precisionVariant === 'kiriv_f32';
+        const strideP = kiriv ? 32 : obj.gaussStridePixels === 8 ? 8 : 4;
         const useHp = obj.precisionVariant === 'hp_scale_rot';
+        const width = kiriv ? obj.textureWidth : 4096;
+        for (const [name, value] of Object.entries({ kiriv: kiriv ? 1 : 0,
+          freetimegs: kiriv && obj.representation === 'freetimegs' ? 1 : 0,
+          kirivSH: kiriv && obj.colorEncoding === 'sh' ? 1 : 0,
+          kirivSHDegree: kiriv ? obj.shDegree : 0 })) {
+          if (activeUniforms[name] !== undefined && activeUniforms[name] !== null) gl.uniform1i(activeUniforms[name], value);
+        }
+        if (activeUniforms.kirivOpacityFloor !== undefined && activeUniforms.kirivOpacityFloor !== null) gl.uniform1f(activeUniforms.kirivOpacityFloor, kiriv ? obj.opacityFloor : 0);
         if (activeUniforms.strideColMask !== undefined && activeUniforms.strideColMask !== null) {
           // stride=4 → 1024 gauss/row, mask=0x3FF; stride=8 → 512 gauss/row, mask=0x1FF
-          gl.uniform1ui(activeUniforms.strideColMask, strideP === 8 ? 0x1FF : 0x3FF);
+          gl.uniform1ui(activeUniforms.strideColMask, width / strideP - 1);
         }
         if (activeUniforms.strideColShift !== undefined && activeUniforms.strideColShift !== null) {
-          gl.uniform1i(activeUniforms.strideColShift, strideP === 8 ? 3 : 2);
+          gl.uniform1i(activeUniforms.strideColShift, Math.log2(strideP));
         }
         if (activeUniforms.strideRowShift !== undefined && activeUniforms.strideRowShift !== null) {
-          gl.uniform1i(activeUniforms.strideRowShift, strideP === 8 ? 9 : 10);
+          gl.uniform1i(activeUniforms.strideRowShift, Math.log2(width / strideP));
         }
         if (activeUniforms.useHpScaleRot !== undefined && activeUniforms.useHpScaleRot !== null) {
           gl.uniform1i(activeUniforms.useHpScaleRot, useHp ? 1 : 0);

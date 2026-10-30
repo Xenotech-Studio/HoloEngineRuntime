@@ -1,7 +1,7 @@
 // Depth sorting Worker 代码
 // 这个文件包含 Worker 的代码，会被转换为 Blob URL
 
-function createWorker(self) {
+export function createWorker(self) {
   let lastProj;
   let positions;        // [N×3] static xyz fp32 (from u32[0..2] uintBitsToFloat)
   let motion;           // [N×9] motion polynomial coefficients (fp32 decoded from packed half2x16)
@@ -191,6 +191,10 @@ function createWorker(self) {
       } else {
         vertexCount = Math.floor((texture.byteLength - (e.data.remaining || 0)) / 4 / strideU32);
       }
+      if (!Number.isSafeInteger(vertexCount) || vertexCount < 0 || vertexCount * strideU32 * 4 > texture.byteLength) throw new Error('Invalid worker vertexCount');
+      if (e.data.representation !== undefined && !['stg', 'freetimegs'].includes(e.data.representation)) throw new Error('Unknown worker representation');
+      const kiriv = e.data.precisionVariant === 'kiriv_f32';
+      if (kiriv && strideU32 !== 128) throw new Error('Invalid KiriV runtime stride');
       positions = new Float32Array(vertexCount * 3);
       // E5: 同时解出 motion + trbf_center，给 motion-evolved depth sort 用。
       // 这块解码是 one-shot, 后续每帧 sort 只读这两个数组。
@@ -202,6 +206,11 @@ function createWorker(self) {
         positions[3 * i + 0] = texture[base + 0];
         positions[3 * i + 1] = texture[base + 1];
         positions[3 * i + 2] = texture[base + 2];
+        if (kiriv) {
+          motion.set(texture.subarray(base + 13, base + 22), 9 * i);
+          trbfCenter[i] = texture[base + 11];
+          continue;
+        }
         // motion: u32[8..12] = pack_half2x16 of motion_0..motion_8 + pad
         const m8 = u32view[base + 8], m9 = u32view[base + 9], m10 = u32view[base + 10],
               m11 = u32view[base + 11], m12 = u32view[base + 12];

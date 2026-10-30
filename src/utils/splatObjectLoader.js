@@ -6,6 +6,8 @@ import { createDepthWorker } from './depthWorker';
 import { getGLErrorName } from '../core/utils/webgl';
 
 export function createSplatTexture(gl, textureData) {
+  const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  if (textureData.width > max || textureData.height > max) throw new Error('Splat texture exceeds MAX_TEXTURE_SIZE');
   const texture = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -21,16 +23,22 @@ export function createSplatIndexBuffer(gl) {
   return gl.createBuffer();
 }
 
-export function createSplatWorker(textureBuffer, onMessage, onError, gaussStridePixels = 4) {
+export function createSplatWorker(textureBuffer, onMessage, onError, gaussStridePixels = 4, metadata = {}) {
   const worker = createDepthWorker();
   if (onMessage) worker.onmessage = onMessage;
   if (onError) worker.onerror = onError;
-  worker.postMessage({ texture: textureBuffer, remaining: 0, gaussStridePixels });
+  worker.postMessage({ texture: textureBuffer, remaining: 0, gaussStridePixels,
+    vertexCount: metadata.gaussianCount, precisionVariant: metadata.precisionVariant,
+    representation: metadata.representation });
   return worker;
 }
 
-export function calculateVertexCount(buffer, gaussStridePixels = 4) {
+export function calculateVertexCount(buffer, gaussStridePixels = 4, gaussianCount = undefined) {
   const strideU32 = gaussStridePixels * 4;
+  if (gaussianCount !== undefined) {
+    if (!Number.isSafeInteger(gaussianCount) || gaussianCount < 0 || gaussianCount * strideU32 * 4 > buffer.byteLength) throw new Error('Invalid effective gaussian_count');
+    return gaussianCount;
+  }
   return Math.floor(buffer.byteLength / 4 / strideU32);
 }
 
@@ -79,8 +87,8 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     onFirstDepthSort,
     onError: onWebGLError
   });
-  const worker = createSplatWorker(textureData.buffer, workerMessageHandler, onWorkerError, gaussStridePixels);
-  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels);
+  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels, textureData.gaussianCount);
+  const worker = createSplatWorker(textureData.buffer, workerMessageHandler, onWorkerError, gaussStridePixels, textureData);
   if (targetObject) {
     targetObject.texture = texture;
     targetObject.textureWidth = textureData.width;
@@ -90,6 +98,7 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     targetObject.worker = worker;
     targetObject.gaussStridePixels = gaussStridePixels;
     targetObject.precisionVariant = precisionVariant;
+    for (const key of ['representation', 'colorEncoding', 'shDegree', 'opacityFloor', 'kirivHeader', 'gaussianCount']) targetObject[key] = textureData[key];
   }
   return {
     texture,
@@ -100,6 +109,8 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
     textureHeight: textureData.height,
     gaussStridePixels,
     precisionVariant,
+    representation: textureData.representation,
+    kirivHeader: textureData.kirivHeader,
   };
 }
 
@@ -108,14 +119,18 @@ export function loadSplatObject({ gl, textureData, onWorkerMessage, onWorkerErro
   const gaussStridePixels = textureData.gaussStridePixels || 4;
   const texture = createSplatTexture(gl, textureData);
   const indexBuffer = createSplatIndexBuffer(gl);
-  const worker = createSplatWorker(textureData.buffer, onWorkerMessage, onWorkerError, gaussStridePixels);
-  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels);
+  const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels, textureData.gaussianCount);
+  const worker = createSplatWorker(textureData.buffer, onWorkerMessage, onWorkerError, gaussStridePixels, textureData);
   return {
     texture,
     indexBuffer,
     worker,
     vertexCount,
     textureWidth: textureData.width,
-    textureHeight: textureData.height
+    textureHeight: textureData.height,
+    gaussStridePixels, precisionVariant: textureData.precisionVariant,
+    representation: textureData.representation, colorEncoding: textureData.colorEncoding,
+    shDegree: textureData.shDegree, opacityFloor: textureData.opacityFloor,
+    kirivHeader: textureData.kirivHeader, gaussianCount: textureData.gaussianCount
   };
 }

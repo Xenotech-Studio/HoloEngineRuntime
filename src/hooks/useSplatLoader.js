@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
+import { KIRIV_MAGIC, LEGACY_MAGIC, parseKiriV, validateLegacyChunk } from '../utils/kiriv';
 
 /**
  * RGB转HSV
@@ -100,18 +101,61 @@ export function useSplatLoader() {
       const remaining = buffer.byteLength - offset;
       handleChunk(chunk, buffer.buffer, remaining, chunks);
     }
-    if (chunk) handleChunk(chunk, buffer.buffer, 0, chunks);
+    if (chunk) throw new Error('Truncated splatv payload');
   }, []);
 
   const loadSplatFile = useCallback(async (url, colorFilter = null) => {
     setLoading(true);
     setError(null);
     setVertexCount(0);
+    textureRef.current = null;
     try {
       const req = await fetch(url, { mode: 'cors', credentials: 'omit' });
       if (req.status !== 200) {
         throw new Error(`${req.status} ${req.statusText} - Unable to load ${req.url}`);
       }
+      // Peek/replay a fragmented prefix without a second fetch. Legacy keeps its
+      // original streaming texture path; v2 is fully validated before publication.
+      const sourceReader = req.body.getReader();
+      const prefixParts = [];
+      let prefixLength = 0;
+      while (prefixLength < 8) {
+        const part = await sourceReader.read();
+        if (part.done) throw new Error('Truncated splat prefix');
+        prefixParts.push(part.value); prefixLength += part.value.length;
+      }
+      const prefetched = new Uint8Array(prefixLength);
+      let copied = 0;
+      for (const part of prefixParts) { prefetched.set(part, copied); copied += part.length; }
+      const magic = new DataView(prefetched.buffer).getUint32(0, true);
+      if (magic === KIRIV_MAGIC) {
+        const parts = [prefetched];
+        let total = prefetched.length;
+        while (true) {
+          const { done, value } = await sourceReader.read();
+          if (done) break;
+          total += value.length;
+          if (total > 1073741824) throw new Error('KiriV: input exceeds 1 GiB limit');
+          parts.push(value);
+        }
+        const bytes = new Uint8Array(total);
+        let at = 0;
+        for (const part of parts) { bytes.set(part, at); at += part.length; }
+        const texture = parseKiriV(bytes);
+        if (colorFilter?.intensity > 0 && colorFilter?.tolerance > 0) {
+          throw new Error('KiriV: legacy packed-color filter is unsupported for float/SH color');
+        }
+        textureRef.current = texture;
+        setVertexCount(texture.gaussianCount);
+        setLoading(false);
+        return texture;
+      }
+      if (magic !== LEGACY_MAGIC) throw new Error('Unknown splatv/KiriV magic');
+      let replayed = false;
+      const legacyReader = { read: () => {
+        if (!replayed) { replayed = true; return Promise.resolve({ done: false, value: prefetched }); }
+        return sourceReader.read();
+      } };
       let currentVertexCount = 0;
       let lastVertexCount = -1;
       let textureData = null;
@@ -125,6 +169,7 @@ export function useSplatLoader() {
         if (!remaining && chunk.type === 'magic') {
           const intView = new Uint32Array(buffer);
           if (intView[0] !== 0x674b) throw new Error('This does not look like a splatv file');
+          if (intView[1] === 0 || intView[1] > 16777216) throw new Error('Invalid legacy header length');
           chunks.push({ size: intView[1], type: 'chunks' });
         } else if (!remaining && chunk.type === 'chunks') {
           try {
@@ -141,6 +186,7 @@ export function useSplatLoader() {
             for (const chunkItem of chunkList) {
               chunks.push(chunkItem);
               if (chunkItem.type === 'splat') {
+                validateLegacyChunk(chunkItem);
                 textureWidth = chunkItem.texwidth;
                 textureHeight = chunkItem.texheight;
                 if (chunkItem.cameras) cameras = chunkItem.cameras;
@@ -177,7 +223,7 @@ export function useSplatLoader() {
           }
         }
       };
-      await readChunks(req.body.getReader(), [{ size: 8, type: 'magic' }], chunkHandler);
+      await readChunks(legacyReader, [{ size: 8, type: 'magic' }], chunkHandler);
       if (textureRef.current && textureRef.current.data && colorFilter && colorFilter.intensity > 0 && colorFilter.tolerance > 0) {
         applyColorFilter(textureRef.current.data, colorFilter);
       }

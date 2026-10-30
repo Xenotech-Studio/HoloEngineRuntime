@@ -26,6 +26,11 @@ export const vertexShaderSource = `
   uniform int  u_strideColShift;
   uniform int  u_strideRowShift;
   uniform bool u_useHpScaleRot;
+  uniform bool u_kiriv;
+  uniform bool u_freetimegs;
+  uniform bool u_kirivSH;
+  uniform int u_kirivSHDegree;
+  uniform float u_kirivOpacityFloor;
 
   in vec2 position;
   in int index;
@@ -40,12 +45,46 @@ export const vertexShaderSource = `
       return ivec2(int(col), int(row));
   }
 
+  float kv(uint word) {
+      uvec4 value = texelFetch(u_texture, gaussCoord(word >> 2u), 0);
+      return uintBitsToFloat(value[int(word & 3u)]);
+  }
+
+  vec3 kirivColor(vec3 evolvedPosition) {
+      if (!u_kirivSH) return vec3(kv(26u), kv(27u), kv(28u));
+      vec3 origin = (inverse(view * model) * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+      vec3 d = evolvedPosition - origin;
+      d = length(d) > 0.0 ? normalize(d) : vec3(0.0, 0.0, 1.0);
+      float x=d.x, y=d.y, z=d.z, z2=z*z;
+      // Real SH, l ascending / m=-l..l, matching the FTGS gsplat basis.
+      float b[16];
+      b[0]=0.28209479177387814;
+      b[1]=-0.48860251190292*y; b[2]=0.48860251190292*z; b[3]=-0.48860251190292*x;
+      b[4]=1.092548430592079*x*y; b[5]=-1.092548430592079*y*z;
+      b[6]=0.9461746957575601*z2-0.3153915652525201;
+      b[7]=-1.092548430592079*x*z; b[8]=0.5462742152960395*(x*x-y*y);
+      b[9]=-0.5900435899266435*y*(3.0*x*x-y*y);
+      b[10]=2.890611442640554*x*y*z;
+      b[11]=y*(-2.285228997322329*z2+0.4570457994644658);
+      b[12]=z*(1.865881662950577*z2-1.119528997770346);
+      b[13]=x*(-2.285228997322329*z2+0.4570457994644658);
+      b[14]=1.445305721320277*z*(x*x-y*y);
+      b[15]=-0.5900435899266435*x*(x*x-3.0*y*y);
+      int n=(u_kirivSHDegree+1)*(u_kirivSHDegree+1);
+      vec3 rgb=vec3(0.5);
+      for (int j=0; j<16; j++) {
+          if (j>=n) break;
+          rgb += b[j]*vec3(kv(uint(26+j)), kv(uint(26+n+j)), kv(uint(26+2*n+j)));
+      }
+      return max(rgb, vec3(0.0));
+  }
+
   void main () {
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
       uvec4 motion1 = texelFetch(u_texture, gaussCoord(3u), 0);
-      vec2 trbf = unpackHalf2x16(motion1.w);
+      vec2 trbf = u_kiriv ? vec2(kv(11u), kv(12u)) : unpackHalf2x16(motion1.w);
       float dt = time - trbf.x;
 
       // Use x*x instead of pow(x, 2.0) -- some ANGLE/Metal/driver implementations of pow
@@ -54,7 +93,7 @@ export const vertexShaderSource = `
       float dtOverScale = dt / trbf.y;
       float topacity = exp(-(dtOverScale * dtOverScale));
       float topacityCull = mix(1.0, topacity, scaleT);
-      if (topacityCull < 0.02) return;
+      if (!u_freetimegs && topacityCull < 0.02) return;
 
       uvec4 motion0 = texelFetch(u_texture, gaussCoord(2u), 0);
       uvec4 static0 = texelFetch(u_texture, gaussCoord(0u), 0);
@@ -64,6 +103,14 @@ export const vertexShaderSource = `
       
       vec4 trot = vec4(unpackHalf2x16(motion1.y).xy, unpackHalf2x16(motion1.z).xy) * dt;
       vec3 tpos = (vec3(m0.xy, m1.x) * dt + vec3(m1.y, m2.xy) * dt*dt + vec3(m3.xy, m4.x) * dt*dt*dt);
+      if (u_kiriv) {
+          tpos = vec3(kv(13u), kv(14u), kv(15u))*dt;
+          trot = vec4(0.0);
+          if (!u_freetimegs) {
+              tpos += vec3(kv(16u), kv(17u), kv(18u))*dt*dt + vec3(kv(19u), kv(20u), kv(21u))*dt*dt*dt;
+              trot = vec4(kv(22u), kv(23u), kv(24u), kv(25u))*dt;
+          }
+      }
       
       vec4 cam = view * model * vec4(uintBitsToFloat(static0.xyz) + tpos, 1);
       vec4 pos = projection * cam;
@@ -74,8 +121,11 @@ export const vertexShaderSource = `
 
       vec4 rot;
       vec3 gaussianScale;
-      if (u_useHpScaleRot) {
-          // hp_scale_rot: pixel 4 (u32[16..19]) = fp32 rotation (xyzw)
+      if (u_kiriv) {
+          rot = vec4(kv(3u), kv(4u), kv(5u), kv(6u)) + trot;
+          gaussianScale = vec3(kv(7u), kv(8u), kv(9u));
+      } else if (u_useHpScaleRot) {
+          // hp_scale_rot: pixel 4 (u32[16..19]) = fp32 rotation (wxyz)
           //               pixel 5 (u32[20..22]) = fp32 scale (xyz), u32[23] = pad
           uvec4 hpRot = texelFetch(u_texture, gaussCoord(4u), 0);
           uvec4 hpScl = texelFetch(u_texture, gaussCoord(5u), 0);
@@ -155,6 +205,14 @@ export const vertexShaderSource = `
       float topacityEff = mix(1.0, topacity, scaleT);
       float alphaEff = mix(1.0, splat.a, scaleT);
       vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
+      if (u_kiriv) {
+          vec3 color = kirivColor(uintBitsToFloat(static0.xyz) + tpos);
+          if (u_freetimegs) {
+              vColor = vec4(color, max(kv(10u)*topacity, u_kirivOpacityFloor));
+          } else {
+              vColor = depthEff * vec4(color, mix(1.0, kv(10u), scaleT)*topacityEff);
+          }
+      }
 
       vec2 vCenter = vec2(pos) / pos.w;
       float depthNDC = pos.z / pos.w;
