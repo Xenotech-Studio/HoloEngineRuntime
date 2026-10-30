@@ -52,6 +52,7 @@ export { globalGizmoDragging } from './src/utils/gizmoState';
 export { createDepthWorker } from './src/utils/depthWorker';
 export { loadAndSetup3DGSObject, create3DGSTexture, create3DGSIndexBuffer, create3DGSWorker } from './src/utils/ply3dgsLoader';
 export { loadAndSetupSplatObject, createSplatTexture, createSplatIndexBuffer, createSplatWorker, loadSplatObject } from './src/utils/splatObjectLoader';
+export { parseKiriV, validateKiriVHeader, KIRIV_MAGIC, KIRIV_LAYOUTS } from './src/utils/kiriv.js';
 export { loadAndSetupMeshObject, parseOBJ, loadOBJFile, createMeshBuffers } from './src/utils/meshLoader';
 export { createPointCloudBuffers, createPointCloudObject, rebaseToSecondsF32, POINT_TIME_TIMELESS } from './src/utils/pointCloudLoader';
 export { createLinesObject, updateLinesObject } from './src/utils/linesLoader';

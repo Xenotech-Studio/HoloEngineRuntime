@@ -41,6 +41,7 @@
     "./utils/depthWorker": "./src/utils/depthWorker.js",
     "./utils/ply3dgsLoader": "./src/utils/ply3dgsLoader.js",
     "./utils/splatObjectLoader": "./src/utils/splatObjectLoader.js",
+    "./utils/kiriv": "./src/utils/kiriv.js",
     "./utils/meshLoader": "./src/utils/meshLoader.js",
     "./utils/sceneManager": "./src/utils/sceneManager.js"
   }
