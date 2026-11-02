@@ -216,9 +216,12 @@ export function useWebGL(canvasRef, options = {}) {
         kirivSH: glContext.getUniformLocation(shaderProgram, 'u_kirivSH'),
         kirivSHDegree: glContext.getUniformLocation(shaderProgram, 'u_kirivSHDegree'),
         kirivOpacityFloor: glContext.getUniformLocation(shaderProgram, 'u_kirivOpacityFloor'),
+        quadTailSigma: glContext.getUniformLocation(shaderProgram, 'quadTailSigma'),
+        motionAlphaCutoff: glContext.getUniformLocation(shaderProgram, 'motionAlphaCutoff'),
         depthOpacityThreshold: glContext.getUniformLocation(shaderProgram, 'depthOpacityThreshold'),
         centerOpacityThreshold: glContext.getUniformLocation(shaderProgram, 'centerOpacityThreshold'),
         depthWriteOnly: glContext.getUniformLocation(shaderProgram, 'depthWriteOnly'),
+        colorOnlyPass: glContext.getUniformLocation(shaderProgram, 'colorOnlyPass'),
       };
 
       attributesRef.current = {
@@ -239,9 +242,11 @@ export function useWebGL(canvasRef, options = {}) {
         sphericalHarmonicsDegree: glContext.getUniformLocation(shaderProgram3DGS, 'sphericalHarmonicsDegree'),
         gaussianScaleLerp: glContext.getUniformLocation(shaderProgram3DGS, 'u_gaussianScaleLerp'),
         gaussianScaleMin: glContext.getUniformLocation(shaderProgram3DGS, 'u_gaussianScaleMin'),
+        quadTailSigma: glContext.getUniformLocation(shaderProgram3DGS, 'quadTailSigma'),
         depthOpacityThreshold: glContext.getUniformLocation(shaderProgram3DGS, 'depthOpacityThreshold'),
         centerOpacityThreshold: glContext.getUniformLocation(shaderProgram3DGS, 'centerOpacityThreshold'),
         depthWriteOnly: glContext.getUniformLocation(shaderProgram3DGS, 'depthWriteOnly'),
+        colorOnlyPass: glContext.getUniformLocation(shaderProgram3DGS, 'colorOnlyPass'),
       };
 
       attributes3DGSRef.current = {

@@ -12,6 +12,11 @@ export const vertexShaderSource = `
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
+  uniform bool depthWriteOnly;
+  uniform bool colorOnlyPass;
+  // 4D temporal opacity cutoff; independent of depth opacity thresholds.
+  uniform float motionAlphaCutoff;
+  uniform float centerOpacityThreshold;
   uniform float time;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
@@ -36,6 +41,7 @@ export const vertexShaderSource = `
   in int index;
 
   out vec4 vColor;
+  uniform float quadTailSigma;
   out vec2 vPosition;
 
   ivec2 gaussCoord(uint subPixel) {
@@ -92,8 +98,11 @@ export const vertexShaderSource = `
       // and breaks alpha blending for gaussians whose trbf_center happens to equal time.
       float dtOverScale = dt / trbf.y;
       float topacity = exp(-(dtOverScale * dtOverScale));
-      float topacityCull = mix(1.0, topacity, scaleT);
-      if (!u_freetimegs && topacityCull < 0.02) return;
+      // FTGS uses its full temporal envelope and opacity floor, without STG culling.
+      if (!u_freetimegs) {
+          float topacityCull = mix(1.0, topacity, scaleT);
+          if (topacityCull < motionAlphaCutoff) return;
+      }
 
       uvec4 motion0 = texelFetch(u_texture, gaussCoord(2u), 0);
       uvec4 static0 = texelFetch(u_texture, gaussCoord(0u), 0);
@@ -118,6 +127,33 @@ export const vertexShaderSource = `
       float clip = 1.2 * pos.w;
       if (pos.z < -clip || pos.x < -clip || pos.x > clip || pos.y < -clip || pos.y > clip) return;
       uvec4 static1 = texelFetch(u_texture, gaussCoord(1u), 0);
+
+      uint rgba = static1.w;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos.z / pos.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float topacityEff = mix(1.0, topacity, scaleT);
+      float alphaEff = mix(1.0, splat.a, scaleT);
+      vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
+
+      if (u_kiriv) {
+          vec3 color = kirivColor(uintBitsToFloat(static0.xyz) + tpos);
+          if (u_freetimegs) {
+              vColor = vec4(color, max(kv(10u)*topacity, u_kirivOpacityFloor));
+          } else {
+              vColor = depthEff * vec4(color, mix(1.0, kv(10u), scaleT)*topacityEff);
+          }
+      }
+
+      // Same final center alpha and threshold as the fragment depth pass.
+      // In 4D scaleT=0 blends alpha to one; raw packed alpha is not sufficient.
+      if (depthWriteOnly && vColor.a < centerOpacityThreshold) return;
+      if (!depthWriteOnly && colorOnlyPass && vColor.a == 0.0) return;
 
       vec4 rot;
       vec3 gaussianScale;
@@ -193,35 +229,23 @@ export const vertexShaderSource = `
       vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
-      uint rgba = static1.w;
-      vec4 splat = vec4(
-          float((rgba) & 0xffu),
-          float((rgba >> 8) & 0xffu),
-          float((rgba >> 16) & 0xffu),
-          float((rgba >> 24) & 0xffu)
-      ) / 255.0;
-      float depthF = clamp(pos.z / pos.w + 1.0, 0.0, 1.0);
-      float depthEff = mix(1.0, depthF, scaleT);
-      float topacityEff = mix(1.0, topacity, scaleT);
-      float alphaEff = mix(1.0, splat.a, scaleT);
-      vColor = depthEff * vec4(1.0, 1.0, 1.0, topacityEff) * vec4(splat.rgb, alphaEff);
-      if (u_kiriv) {
-          vec3 color = kirivColor(uintBitsToFloat(static0.xyz) + tpos);
-          if (u_freetimegs) {
-              vColor = vec4(color, max(kv(10u)*topacity, u_kirivOpacityFloor));
-          } else {
-              vColor = depthEff * vec4(color, mix(1.0, kv(10u), scaleT)*topacityEff);
-          }
-      }
+
 
       vec2 vCenter = vec2(pos) / pos.w;
       float depthNDC = pos.z / pos.w;
+      // Shrink after the axis clamp, preserving the original Gaussian footprint.
+      // Keep the default path free of scaling; geometry and varying must agree.
+      vec2 quadPosition = position;
+      float quadScale = quadTailSigma / 2.0;
+      if (quadTailSigma != 2.0) {
+          quadPosition = position * quadScale;
+      }
       gl_Position = vec4(
           vCenter 
-          + position.x * majorAxis / viewport 
-          + position.y * minorAxis / viewport, depthNDC, 1.0);
+          + quadPosition.x * majorAxis / viewport
+          + quadPosition.y * minorAxis / viewport, depthNDC, 1.0);
 
-      vPosition = position;
+      vPosition = quadPosition;
   }
 `.trim();
 
@@ -236,11 +260,13 @@ export const fragmentShaderSource = `
   uniform float centerOpacityThreshold;
   uniform bool depthWriteOnly;
   
+  // Tail radius in vPosition units: 2 sigma => A=-4; 1.5 sigma => A=-2.25.
+  uniform float quadTailSigma;
   out vec4 fragColor;
   
   void main () {
       float A = -dot(vPosition, vPosition);
-      if (A < -4.0) discard;
+      if (A < -(quadTailSigma * quadTailSigma)) discard;
       float B = exp(A) * vColor.a;
       
       if (depthWriteOnly) {
@@ -250,10 +276,8 @@ export const fragmentShaderSource = `
           if (B < depthOpacityThreshold) {
               discard;
           }
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(0.0, 0.0, 0.0, 0.0);
       } else {
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(B * vColor.rgb, B);
       }
   }

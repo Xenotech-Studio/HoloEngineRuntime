@@ -3,6 +3,7 @@
  * 基于 INRIA V1 格式的 PLY 文件加载
  */
 
+import { createStandardWorkerMessageHandler } from './splatObjectLoader';
 import { createDepthWorker } from './depthWorker';
 import { getGLErrorName } from '../core/utils/webgl';
 
@@ -113,35 +114,7 @@ export function create3DGSWorker(textureBuffer, vertexCount, onMessage, onError)
   return worker;
 }
 
-export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObject, onFirstDepthSort, onError }) {
-  let firstDepthSortReceived = false;
-
-  return (e) => {
-    if (!e.data.depthIndex || !indexBuffer) return;
-    const { depthIndex, vertexCount } = e.data;
-
-    const shouldLog = typeof window !== 'undefined' && window.enableAssetPreviewDebugLogs;
-    if (shouldLog && targetObject) {
-      targetObject._lastDepthIndices = new Uint32Array(depthIndex);
-    }
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
-
-    if (targetObject) {
-      targetObject.vertexCount = vertexCount;
-      if (!firstDepthSortReceived) targetObject.ready = true;
-    }
-
-    const err = gl.getError();
-    if (err !== gl.NO_ERROR && onError) onError(err, getGLErrorName(gl, err));
-
-    if (!firstDepthSortReceived && onFirstDepthSort) {
-      firstDepthSortReceived = true;
-      onFirstDepthSort(vertexCount);
-    }
-  };
-}
+export { createStandardWorkerMessageHandler } from './splatObjectLoader';
 
 export function loadAndSetup3DGSObject({ gl, textureData, targetObject, onFirstDepthSort, onWorkerError, onWebGLError }) {
   if (!gl || !textureData) throw new Error('loadAndSetup3DGSObject: gl and textureData are required');

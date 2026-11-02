@@ -145,7 +145,9 @@ async function sortAtTimes(factory,texture,extra={}) {
   try { factory(self); } finally { globalThis.MessageChannel=channel; }
   self.onmessage({data:{texture,gaussStridePixels:4,...extra}});
   for (const time of [0,0.5,1]) {
-    self.onmessage({data:{view:[1,0,.2,0,0,1,.3,0,0,0,1,0,0,0,0,1],time}});
+    const view=[1,0,.2,0,0,1,.3,0,0,0,1,0,0,0,0,1];
+    const snapshot={requestId:1+time*2,time,view,projection:view,model:view,viewProj:view,width:1280,height:720,fx:800,fy:800,sortStrategy:'back-to-front'};
+    self.onmessage({data:{view,time,snapshot}});
     await new Promise(r=>setTimeout(r,10));
   }
   return messages.map(m=>({time:m.time,vertexCount:m.vertexCount,depthIndex:m.depthIndex}));
@@ -174,7 +176,9 @@ test('worker uses effective count + float32 FTGS motion, excludes texture paddin
   const channel=globalThis.MessageChannel; globalThis.MessageChannel=undefined;
   try { createWorker(self); } finally { globalThis.MessageChannel=channel; }
   self.onmessage({data:{texture:t.buffer,vertexCount:1,gaussStridePixels:32,precisionVariant:'kiriv_f32',representation:'freetimegs'}});
-  self.onmessage({data:{view:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],time:0}});
+  const view=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+  const snapshot={requestId:1,time:0,view,projection:view,model:view,viewProj:view,width:1280,height:720,fx:800,fy:800,sortStrategy:'back-to-front'};
+  self.onmessage({data:{view,time:0,snapshot}});
   await new Promise(r=>setTimeout(r,10));
   assert.equal(messages[0].vertexCount,1); assert.deepEqual([...messages[0].depthIndex],[0]);
   assert.throws(()=>self.onmessage({data:{texture:t.buffer,vertexCount:1000000}}),/vertexCount/);

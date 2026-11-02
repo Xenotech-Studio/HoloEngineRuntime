@@ -428,6 +428,7 @@ pipeline.addObject(obj);
 - `depthRange` - 深度范围（米）
 - `depthRangeNear` - 近处深度范围（米）
 - `depthGamma` - Gamma 值
+- `depthWritePassEnabled` - 是否启用 GS 深度写入第二遍（默认 `true`）；用于与 mesh/点云混合时的深度遮挡，仅有单个 GS 且无 mesh/点云的首页可设为 `false`，避免重复绘制。管线 API：`setDepthWritePassEnabled(enabled)` / `getDepthWritePassEnabled()`
 - `depthOpacityThreshold` - 深度写入的像素不透明度阈值
 - `centerOpacityThreshold` - 深度写入的中心点不透明度阈值
 
@@ -583,3 +584,22 @@ import { HoloRP } from '@holoengineruntime';
 3. 用 `useWebGL`、`HoloRP`、`createPointCloudObject` / `createLinesObject` 等实现渲染；线段、点云等通过 `extendedOptions` 传入管线
 
 **优势**：功能集中、统一导入、便于复用。
+
+### Optional lossy GS cutoffs
+
+`HoloRP.setQuadTailSigma(sigma)` controls fragment tail discard and quad coverage for 4DGS/3DGS:
+`A < -sigma²`, default `2` (`-4.0`), homepage `1.5` (`-2.25`). Valid radius is
+`0 < sigma <= 2` (larger values clamp to 2; invalid values reset to 2). Vertex
+positions and their Gaussian-coordinate varying scale together by `sigma / 2`,
+after the existing axis clamp; covariance and axis lengths are unchanged.
+The default sigma 2 bypasses scaling. At sigma 1.5, quad area is 0.5625 of the
+original. The Gaussian-coordinate circle remains inscribed in the quad, so
+interior weights are mathematically unchanged. GPU interpolation rounding and
+rasterization edge rules still require device image comparisons for bitwise parity.
+`HoloRP.setMotionAlphaCutoff(cutoff)` controls 4D temporal opacity
+`mix(1.0, topacity, scaleT)`, default `0.02`, homepage `0.05`; finite values clamp
+to [0, 1], invalid values reset to 0.02. It is independent of
+`centerOpacityThreshold` / `depthOpacityThreshold`; 3DGS has no temporal branch.
+The host `SplatPreviewer` exposes matching props; only the homepage opts in.
+Both GS fragment shaders use implicit fragment depth (the same gl_FragCoord.z
+previously assigned explicitly), retaining discard and depth-mask behavior.

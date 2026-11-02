@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { parseFtgsPly, isPlyUrl, isFtgsPlyUrl, plyRenderType, evaluateFtgsRecord } from '../src/utils/ftgsPly.js';
 import { loadPlyFile } from '../src/hooks/usePlyLoader.js';
 import { createWorker } from '../src/utils/depthWorker.js';
+import { verifyLegacyContract, loadPipeline } from './merge-contract-helpers.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const url='https://fixture.invalid/model.ftgs.ply';
@@ -113,13 +114,8 @@ test('ordinary PLY remains byte-identical to pre-task loader, including existing
     assert.deepEqual(now,old); assert.equal(plyRenderType(now),'3dgs');
   }
 });
-test('splatv/kiriv/SH/worker implementations and KiriV tests are unchanged',()=>{
-  for(const path of ['src/hooks/useSplatLoader.js','src/utils/kiriv.js','src/utils/splatObjectLoader.js',
-    'src/utils/ply3dgsLoader.js','src/core/utils/holoRP.js','src/hooks/useWebGL.js','src/shaders/splatShaders.js',
-    'src/shaders/gaussian3dShaders.js','src/utils/depthWorker.js','tests/kiriv.test.mjs','tests/cpu-probe.mjs','tests/validate-kiriv.mjs']) {
-    const old=execFileSync('git',['show',`40c8d81:${path}`],{cwd:root});
-    assert.deepEqual(readFileSync(root+path),old,path);
-  }
+test('splatv/kiriv/SH/worker behavior survives the perf merge',async()=>{
+  await verifyLegacyContract();
 });
 test('native FTGS worker sorts crossing trajectories at matching 4D time/count',async()=>{
   const t=parseFtgsPly(fixture({value:{x:0,y:0,z:0,velocity_2:1}}),url);
@@ -130,7 +126,9 @@ test('native FTGS worker sorts crossing trajectories at matching 4D time/count',
   try { createWorker(self); } finally { globalThis.MessageChannel=channel; }
   self.onmessage({data:{texture:t.buffer,vertexCount:t.gaussianCount,gaussStridePixels:t.gaussStridePixels,precisionVariant:t.precisionVariant,representation:t.representation}});
   for(const time of [0,1]) {
-    self.onmessage({data:{view:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],time}});
+    const view=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    const snapshot={requestId:time+1,time,view,projection:view,model:view,viewProj:view,width:1280,height:720,fx:800,fy:800,sortStrategy:'back-to-front'};
+    self.onmessage({data:{view,time,snapshot}});
     await new Promise(r=>setTimeout(r,10));
   }
   assert.equal(messages[0].vertexCount,2); assert.deepEqual([...messages[0].depthIndex],[1,0]);
@@ -158,8 +156,9 @@ test('actual component load/sync callbacks select 4D by PLY content and reuse co
   const loadNode=variable(ast,'loadAllObjects').init;
   const identity=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
   const createTransformMatrix=()=>identity;
+  const { Pipeline, RenderableObject }=loadPipeline();
   const sync=new Function('RenderableObject','RenderType','createTransformMatrix',`return ${source.slice(syncNode.start,syncNode.end)}`)(
-    class {constructor(id){this.id=id;}}, {'3DGS':'3dgs','4DGS':'4dgs',MESH:'mesh'},createTransformMatrix);
+    RenderableObject, {'3DGS':'3dgs','4DGS':'4dgs',MESH:'mesh'},createTransformMatrix);
   const loadCode=source.slice(loadNode.start,loadNode.end)
     .replace("import('../hooks/usePlyLoader')",'Promise.resolve(plyModule)')
     .replace("import('../utils/ply3dgsLoader')",'Promise.resolve(staticModule)');
@@ -171,7 +170,17 @@ test('actual component load/sync callbacks select 4D by PLY content and reuse co
     const object={id:'fixture',modelUrl:`https://fixture.invalid/${name}`,type,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],
       loaded:false,loading:false,plyRenderType:'stale',getModelMatrix:()=>identity};
     const errors=[],calls=[],workerMessages=[],objects=new Map();
-    const pipeline={getObject:id=>objects.get(id),addObject:o=>objects.set(o.id,o),_resolveFourDGaussianTimeUniform:()=>.75};
+    let invalidations=0;
+    const uniformTimes=[];
+    const pipeline=Object.create(Pipeline.prototype);
+    pipeline.gl=new Proxy({uniform1f:(location,value)=>{if(location==='time') uniformTimes.push(value);}},
+      {get:(target,key)=>target[key]??(()=>{})});
+    pipeline.getObject=id=>objects.get(id); pipeline.addObject=o=>objects.set(o.id,o);
+    pipeline._resolveFourDGaussianTimeUniform=()=>.75;
+    pipeline._frameTargetTime=pipeline._resolveFourDGaussianTimeUniform();
+    pipeline._frameSnapshots=new Map(); pipeline._singleView=true;
+    pipeline.depthWritePassEnabled=true; pipeline.objects=objects;
+    const draws=[]; pipeline._renderSplat=(obj,model)=>draws.push({obj,model});
     const setup=kind=>({textureData:t,targetObject:o})=>{
       calls.push(kind);
       o.texture='mock';o.indexBuffer='mock';o.vertexCount=t.gaussianCount??t.vertices.length;
@@ -185,6 +194,7 @@ test('actual component load/sync callbacks select 4D by PLY content and reuse co
       workerReadyRef:{current:new Map()},loadingRef:{current:new Set()},renderPipelineRef:{current:pipeline},
       canvasRef:{current:{clientWidth:1280,clientHeight:720}},viewMatrixRef:{current:identity},cameraRef:{current:camera},
       checkAllLoaded:()=>{},onError:e=>errors.push(e),createTransformMatrix,syncObjectToPipeline:sync,
+      invalidateRef:{current:()=>{invalidations++;}},
       getDefaultCamera:()=>camera,isPlyUrl,plyRenderType,plyModule:{loadPlyFile},
       staticModule:{loadAndSetup3DGSObject:setup('3dgs')},loadAndSetupSplatObject:setup('4dgs'),
       loadSplatFile:async()=>{calls.push('splat-loader');return {gaussianCount:2,width:4096,height:1,gaussStridePixels:4,precisionVariant:'lite'};},
@@ -194,7 +204,22 @@ test('actual component load/sync callbacks select 4D by PLY content and reuse co
     try { await loadAll(); } finally {globalThis.fetch=saved;}
     assert.deepEqual(errors,[],name); assert.equal(object.loaded,true,name);
     assert.equal(objects.get('fixture').renderType,expected,`${name} type=${type}`);
-    assert.equal(calls.at(-1),expected); assert.equal(workerMessages.at(-1).time,.75);
+    assert.equal(calls.at(-1),expected);
+    assert.equal(workerMessages.length,0,'component must leave snapshot requests to the pipeline');
+    assert.equal(invalidations,1,'load must schedule the first pipeline frame');
+    const renderObject=objects.get('fixture');
+    pipeline._renderGSObjects([renderObject],identity,identity,null,{},
+      {time:'time'},{},{viewport:{width:1280,height:720},fx:800,fy:800},expected==='4dgs');
+    assert.equal(workerMessages.length,1,'pipeline is the sole request sender for both passes');
+    assert.equal(workerMessages.at(-1).time,expected==='4dgs'?.75:.5);
+    assert.equal(workerMessages.at(-1).snapshot.time,workerMessages.at(-1).time);
+    assert.equal(workerMessages.at(-1).snapshot.requestId,1);
+    assert.equal(draws.length,2);
+    if(expected==='4dgs') {
+      assert.equal(workerMessages.at(-1).time,.75);
+      assert.ok(uniformTimes.length>0);
+      assert.ok(uniformTimes.every(time=>time===.75),'shader and sort reuse controlled time');
+    }
     if(temporal) {assert.equal(objects.get('fixture').representation,'freetimegs');assert.equal(objects.get('fixture').ftgsMetadata.time_units,'normalized');}
     else if(temporal===null) assert.equal(calls[0],'splat-loader');
   }

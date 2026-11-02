@@ -38,6 +38,7 @@ export default function HoloEngineRuntime({
   depthRange = 30.0, // 深度范围（米），用于调整颜色渐变的最远距离
   depthRangeNear = 10.0, // 近处深度范围（米），用于调整颜色渐变的起始距离
   depthGamma = 1.5, // Gamma 值，用于调整映射曲线的非线性程度
+  depthWritePassEnabled = true, // 与 mesh/点云混合时需要 GS 深度第二遍
   depthOpacityThreshold = 0.13, // 深度写入的像素不透明度阈值（0.0-1.0）
   centerOpacityThreshold = 0.65, // 深度写入的中心点不透明度阈值（0.0-1.0）
   // ``null`` keeps HoloRP's built-in animation; [0, 1] pins 4DGS time.
@@ -47,6 +48,7 @@ export default function HoloEngineRuntime({
   // Opt-in: existing COLMAP/editor consumers retain continuous rendering.
   suspended = false,
   redrawVersion = 0,
+  ssaaFactor = 3,
   showGrid,
   showAxes
 }) {
@@ -113,11 +115,13 @@ export default function HoloEngineRuntime({
     // run with no pipeline and will not rerun for an unchanged prop. Seed
     // every new/recreated pipeline before exposing it to the render loop.
     pipeline.fourDGaussianTimeUser = controlledTime;
+    pipeline.setDepthWritePassEnabled(depthWritePassEnabled);
     pipeline.initAxisGrid(initAxisGridRenderer);
     renderPipelineRef.current = pipeline;
     
     // 创建 Canvas 渲染目标
     const renderTarget = new CanvasRenderTarget(canvasRef.current, gl);
+    renderTarget.setSsaaFactor(ssaaFactor);
     renderTarget.setRenderScale(renderScaleRef.current);
     renderTargetRef.current = renderTarget;
     invalidateRef.current();
@@ -133,6 +137,11 @@ export default function HoloEngineRuntime({
       }
     };
   }, [gl, program, program3DGS, meshProgram, programPointCloud, programLines, uniforms, attributes, uniforms3DGS, attributes3DGS, meshUniforms, meshAttributes, pointCloudUniforms, pointCloudAttributes, linesUniforms, linesAttributes]);
+
+  useEffect(() => {
+    renderTargetRef.current?.setSsaaFactor(ssaaFactor);
+    invalidateRef.current();
+  }, [ssaaFactor]);
 
   // 单独更新 FOV（不重新创建渲染管线）
   // FOV 仅存在 Camera.targetVerticalFOV；HoloRP 用其 projectionMatrix getter
@@ -176,6 +185,13 @@ export default function HoloEngineRuntime({
       renderPipelineRef.current.setDepthGamma(depthGamma);
     }
   }, [depthGamma]);
+
+  // 单独同步开关，不重建管线；初始化时也应用，覆盖 WebGL 延迟就绪。
+  useEffect(() => {
+    if (renderPipelineRef.current) {
+      renderPipelineRef.current.setDepthWritePassEnabled(depthWritePassEnabled);
+    }
+  }, [depthWritePassEnabled]);
 
   // 设置深度写入的不透明度阈值
   useEffect(() => {
@@ -402,6 +418,8 @@ export default function HoloEngineRuntime({
       pipeline.addObject(renderObj);
     }
     
+    renderObj.sortSource = sceneObj;
+
     // 更新渲染对象的资源（如果场景对象已加载）
     if (sceneObj.loaded) {
       // 根据asset的type字段判断类型（优先），如果没有type则根据文件扩展名推断
@@ -698,30 +716,8 @@ export default function HoloEngineRuntime({
                 syncObjectToPipeline(obj, renderPipelineRef.current, workerReadyRef);
               }
               
-              // 发送初始view矩阵到Worker
-              if (gl && canvasRef.current && renderPipelineRef.current && viewMatrixRef.current && cameraRef.current) {
-                const canvas = canvasRef.current;
-                const canvasWidth = canvas.clientWidth || canvas.width || window.innerWidth;
-                const canvasHeight = canvas.clientHeight || canvas.height || window.innerHeight;
-                const activeCamera = cameraRef.current;
-                
-                // 更新相机的宽高（如果 canvas 尺寸变化）
-                activeCamera.width = canvasWidth;
-                activeCamera.height = canvasHeight;
-                
-                const projectionMatrix = activeCamera.projectionMatrix;
-                const viewMatrix = activeCamera.viewMatrix;
-                const currentModelMatrix = obj.getModelMatrix ? obj.getModelMatrix(createTransformMatrix) : createTransformMatrix(obj.position, obj.rotation.map(deg => (deg * Math.PI) / 180), obj.scale);
-                const viewProj = activeCamera.getViewProjModelMatrix(currentModelMatrix);
-                
-                if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16 && obj.worker) {
-                  obj.worker.postMessage({
-                    view: viewProj,
-                    time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
-                  });
-                }
-              }
-              
+              invalidateRef.current();
+
               checkAllLoaded();
             }
           } else {
@@ -767,23 +763,8 @@ export default function HoloEngineRuntime({
                 syncObjectToPipeline(obj, renderPipelineRef.current, workerReadyRef);
               }
               
-              // 发送初始视图投影矩阵到 Worker（相机相关，由组件自行管理）
-              const canvas = canvasRef.current;
-              const canvasWidth = canvas ? (canvas.clientWidth || canvas.width || window.innerWidth) : window.innerWidth;
-              const canvasHeight = canvas ? (canvas.clientHeight || canvas.height || window.innerHeight) : window.innerHeight;
-              const activeCamera = cameraRef.current || getDefaultCamera();
-              
-              // 更新相机的宽高（如果 canvas 尺寸变化）
-              activeCamera.width = canvasWidth;
-              activeCamera.height = canvasHeight;
-              
-              const modelMatrix = obj.getModelMatrix(createTransformMatrix);
-              const viewProj = activeCamera.getViewProjModelMatrix(modelMatrix);
-              worker.postMessage({
-                view: viewProj,
-                time: renderPipelineRef.current._resolveFourDGaussianTimeUniform(),
-              });
-              
+              invalidateRef.current();
+
               // Worker的第一次深度排序完成后会通过onmessage回调标记为就绪
               // 这里不立即检查，等待Worker返回第一次深度排序结果
             }
@@ -841,7 +822,7 @@ export default function HoloEngineRuntime({
       if (obj.worker && !observedWorkersRef.current.has(obj.worker)) {
         observedWorkersRef.current.add(obj.worker);
         obj.worker.addEventListener('message', event => {
-          if (!event.data.depthIndex) return;
+          if (!event.data.snapshot && !event.data.sortInvalidated) return;
           renderStatsRef.current.sortResults++;
           invalidateRef.current();
         });
@@ -892,7 +873,7 @@ export default function HoloEngineRuntime({
         // 更新 Worker（用于深度排序）
         if (viewProj && Array.isArray(viewProj) && viewProj.length >= 16) {
           renderStatsRef.current.sortRequests++;
-          worker.postMessage({ view: viewProj, time });
+          // Pipeline already sent the versioned snapshot.
         }
       },
       null, // XR frame（非XR模式）
@@ -937,7 +918,7 @@ export default function HoloEngineRuntime({
     invalidateRef.current();
   }, [suspended, redrawVersion, showGrid, showAxes, controlledTime, targetVerticalFOV,
     meshDebugMode, showDepthVisualization, depthRange, depthRangeNear, depthGamma,
-    depthOpacityThreshold, centerOpacityThreshold]);
+    depthWritePassEnabled, depthOpacityThreshold, centerOpacityThreshold]);
 
 
   // 处理错误

@@ -10,6 +10,9 @@ export const vertexShader3DGSSource = `
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
+  uniform bool depthWriteOnly;
+  uniform bool colorOnlyPass;
+  uniform float centerOpacityThreshold;
   uniform int sphericalHarmonicsDegree;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
@@ -18,6 +21,7 @@ export const vertexShader3DGSSource = `
   in int index;
   
   out vec4 vColor;
+  uniform float quadTailSigma;
   out vec2 vPosition;
   
   vec3 evaluateSH(int degree, vec3 dir) {
@@ -37,6 +41,24 @@ export const vertexShader3DGSSource = `
   
       float clip = 1.2 * pos_proj.w;
       if (pos_proj.z < -clip || pos_proj.x < -clip || pos_proj.x > clip || pos_proj.y < -clip || pos_proj.y > clip) return;
+
+      uint rgba = static1.w;
+      vec4 splat = vec4(
+          float((rgba) & 0xffu),
+          float((rgba >> 8) & 0xffu),
+          float((rgba >> 16) & 0xffu),
+          float((rgba >> 24) & 0xffu)
+      ) / 255.0;
+      float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
+      float depthEff = mix(1.0, depthF, scaleT);
+      float aEff = mix(1.0, splat.a, scaleT);
+      // The fragment shader premultiplies RGB by the Gaussian alpha exactly once.
+      vColor = depthEff * vec4(splat.rgb, aEff);
+
+      // Same final center alpha and threshold as the fragment depth pass.
+      // In 4D scaleT=0 blends alpha to one; raw packed alpha is not sufficient.
+      if (depthWriteOnly && vColor.a < centerOpacityThreshold) return;
+      if (!depthWriteOnly && colorOnlyPass && vColor.a == 0.0) return;
 
       vec4 rot = vec4(unpackHalf2x16(static0.w).xy, unpackHalf2x16(static1.x).xy);
       vec3 gaussianScale = vec3(unpackHalf2x16(static1.y).xy, unpackHalf2x16(static1.z).x);
@@ -98,27 +120,22 @@ export const vertexShader3DGSSource = `
       vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
       vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
       
-      uint rgba = static1.w;
-      vec4 splat = vec4(
-          float((rgba) & 0xffu),
-          float((rgba >> 8) & 0xffu),
-          float((rgba >> 16) & 0xffu),
-          float((rgba >> 24) & 0xffu)
-      ) / 255.0;
-      float depthF = clamp(pos_proj.z / pos_proj.w + 1.0, 0.0, 1.0);
-      float depthEff = mix(1.0, depthF, scaleT);
-      float aEff = mix(1.0, splat.a, scaleT);
-      // The fragment shader premultiplies RGB by the Gaussian alpha exactly once.
-      vColor = depthEff * vec4(splat.rgb, aEff);
 
       vec2 vCenter = vec2(pos_proj) / pos_proj.w;
       float depthNDC = pos_proj.z / pos_proj.w;
+      // Shrink after the axis clamp, preserving the original Gaussian footprint.
+      // Keep the default path free of scaling; geometry and varying must agree.
+      vec2 quadPosition = position;
+      float quadScale = quadTailSigma / 2.0;
+      if (quadTailSigma != 2.0) {
+          quadPosition = position * quadScale;
+      }
       gl_Position = vec4(
           vCenter 
-          + position.x * majorAxis / viewport 
-          + position.y * minorAxis / viewport, depthNDC, 1.0);
+          + quadPosition.x * majorAxis / viewport
+          + quadPosition.y * minorAxis / viewport, depthNDC, 1.0);
 
-      vPosition = position;
+      vPosition = quadPosition;
   }
 `.trim();
 
@@ -133,11 +150,13 @@ export const fragmentShader3DGSSource = `
   uniform float centerOpacityThreshold;
   uniform bool depthWriteOnly;
   
+  // Tail radius in vPosition units: 2 sigma => A=-4; 1.5 sigma => A=-2.25.
+  uniform float quadTailSigma;
   out vec4 fragColor;
   
   void main () {
       float A = -dot(vPosition, vPosition);
-      if (A < -4.0) discard;
+      if (A < -(quadTailSigma * quadTailSigma)) discard;
       float B = exp(A) * vColor.a;
       
       if (depthWriteOnly) {
@@ -147,10 +166,8 @@ export const fragmentShader3DGSSource = `
           if (B < depthOpacityThreshold) {
               discard;
           }
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(0.0, 0.0, 0.0, 0.0);
       } else {
-          gl_FragDepth = gl_FragCoord.z;
           fragColor = vec4(B * vColor.rgb, B);
       }
   }

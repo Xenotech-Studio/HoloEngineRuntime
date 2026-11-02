@@ -84,6 +84,7 @@ export class CanvasRenderTarget extends RenderTarget {
     this._fx = 0;
     this._fy = 0;
     this.renderScale = 1;
+    this.ssaaFactor = 3;
     this._resizeObserver = null;
     if (observeResize && typeof ResizeObserver !== 'undefined') {
       this._resizeObserver = new ResizeObserver(() => this.resize());
@@ -92,17 +93,23 @@ export class CanvasRenderTarget extends RenderTarget {
     }
   }
 
-  // Shared policy: 3x SSAA * DPR (<= 2) * host zoom (>= 0.25).
+  // Shared policy: configurable SSAA (default 3x) * DPR (<= 2) * host zoom (>= 0.25).
   // Bound each canvas to 4096 per edge / 8 MP; zoom is not a DPR cap.
   // Apply one scale to both axes so the projection retains the CSS aspect ratio.
-  static getRenderSize(width, height, pixelRatio = window.devicePixelRatio || 1, zoom = 1) {
+  static getRenderSize(width, height, pixelRatio = window.devicePixelRatio || 1, zoom = 1, ssaaFactor = 3) {
     if (width <= 0 || height <= 0) return { width: 0, height: 0 };
     const dpr = Math.min(Number.isFinite(pixelRatio) && pixelRatio > 0 ? pixelRatio : 1, 2);
     const renderZoom = Number.isFinite(zoom) ? Math.max(0.25, zoom) : 1;
+    const ssaa = Number.isFinite(ssaaFactor) && ssaaFactor > 0 ? ssaaFactor : 3;
     const scale = Math.min(
-      3 * dpr * renderZoom, 4096 / Math.max(width, height), Math.sqrt(8388608 / (width * height)),
+      ssaa * dpr * renderZoom, 4096 / Math.max(width, height), Math.sqrt(8388608 / (width * height)),
     );
     return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+  }
+
+  setSsaaFactor(factor) {
+    this.ssaaFactor = Number.isFinite(factor) && factor > 0 ? factor : 3;
+    this.resize();
   }
 
   setRenderScale(zoom) {
@@ -113,7 +120,7 @@ export class CanvasRenderTarget extends RenderTarget {
 
   resize() {
     const size = CanvasRenderTarget.getRenderSize(
-      this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.renderScale,
+      this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.renderScale, this.ssaaFactor,
     );
     if (!size.width || !size.height) return size;
     if (this.canvas.width !== size.width) this.canvas.width = size.width;
