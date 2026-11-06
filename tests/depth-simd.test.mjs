@@ -122,3 +122,10 @@ test('feature detection and corrupt binaries fall back without throwing', () => 
   }
   assert.equal(context.make(new Uint8Array([0])),null);
 });
+
+
+test('25,430,016-point model rejects optional 2.65 GiB SIMD cache before reading or allocating', () => {
+  const unreadable = new Proxy({}, {get() { throw new Error('must not access inputs'); }});
+  assert.throws(() => make().depths(unreadable, unreadable, unreadable, 25430016,
+    true, .5, []), /SIMD sort cache exceeds 256 MiB/);
+});

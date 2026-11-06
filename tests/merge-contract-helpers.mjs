@@ -1,3 +1,4 @@
+import { createDataTextureArray } from '../src/utils/dataTextureArray.js';
 // Behavioral replacement for the temporary 40c8d81 source-byte lock.
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -16,6 +17,7 @@ function moduleVM(source, names, globals = {}) {
 }
 export function loadPipeline() {
   return moduleVM(read('src/core/utils/holoRP.js') + '\nconst Pipeline=HoloRP;', ['Pipeline','RenderableObject'], {
+    dataTextureVariant: () => null,
     createTransformMatrix: identity4,
     identity4, multiply4: (a,b) => a.map((_,i) => [0,1,2,3].reduce((sum,k) => sum+a[k*4+i%4]*b[Math.floor(i/4)*4+k],0)),
   });
@@ -55,14 +57,14 @@ export async function verifyLegacyContract() {
     uniform1f:(k,v)=>values.set(k,v),drawArraysInstanced:(...v)=>draws.push(v)},
     {get:(target,key)=>target[key]??(()=>{})});
   const cases=[
-    [{precisionVariant:'lite'},[0,0,0,0,0,1023,2,10,0]],
-    [{precisionVariant:'hp_scale_rot',gaussStridePixels:8},[0,0,0,0,0,511,3,9,1]],
-    [{precisionVariant:'kiriv_f32',representation:'freetimegs',colorEncoding:'sh',shDegree:3,opacityFloor:.0001,textureWidth:4096},[1,1,1,3,.0001,127,5,7,0]],
+    [{precisionVariant:'lite'},[0,0,0,0,0,2,0]],
+    [{precisionVariant:'hp_scale_rot',gaussStridePixels:8},[0,0,0,0,0,3,1]],
+    [{precisionVariant:'kiriv_f32',representation:'freetimegs',colorEncoding:'sh',shDegree:3,opacityFloor:.0001,textureWidth:4096},[1,1,1,3,.0001,5,0]],
   ];
   for (const [metadata,expected] of cases) {
     values.clear();
     pipeline._renderSplat({...metadata,isReady:()=>true,texture:{},vertexCount:2},identity4(),{},u,{},true);
-    assert.deepEqual(['kiriv','freetimegs','kirivSH','kirivSHDegree','kirivOpacityFloor','strideColMask','strideColShift','strideRowShift','useHpScaleRot'].map(k=>values.get(u[k])),expected);
+    assert.deepEqual(['kiriv','freetimegs','kirivSH','kirivSHDegree','kirivOpacityFloor','strideColShift','useHpScaleRot'].map(k=>values.get(u[k])),expected);
   }
   pipeline._renderSplat({isReady:()=>true,texture:{},shTexture:{},sphericalHarmonicsDegree:3,vertexCount:2},identity4(),{},u3,{},false);
   assert.equal(values.get(u3.shTexture),1); assert.equal(values.get(u3.sphericalHarmonicsDegree),3);
@@ -71,16 +73,17 @@ export async function verifyLegacyContract() {
   // splatObjectLoader: effective count, metadata, and exact upload data survive setup.
   const requests=[],uploads=[], worker={postMessage:m=>requests.push(m)};
   const loader=moduleVM(read('src/utils/splatObjectLoader.js'),['calculateVertexCount','loadAndSetupSplatObject'],
-    {createDepthWorker:()=>worker,getGLErrorName:()=>'',Uint32Array,Float32Array});
+    {createDataTextureArray,createDepthWorker:()=>worker,getGLErrorName:()=>'',Uint32Array,Float32Array});
   const texture=parseKiriV(nativeFile()), target={};
-  const gl=new Proxy({getParameter:()=>16384,createTexture:()=>({}),createBuffer:()=>({}),texImage2D:(...args)=>uploads.push(args)},
+  const gl=new Proxy({NO_ERROR:0,getError:()=>0,getParameter:()=>16384,createTexture:()=>({}),createBuffer:()=>({}),texSubImage3D:(...args)=>uploads.push(args)},
     {get:(target,key)=>target[key]??(()=>{})});
   loader.loadAndSetupSplatObject({gl,textureData:texture,targetObject:target});
   assert.equal(target.vertexCount,1); assert.equal(requests[0].vertexCount,1);
   assert.equal(requests[0].gaussStridePixels,32); assert.equal(requests[0].precisionVariant,'kiriv_f32');
   assert.equal(requests[0].representation,'freetimegs');
   assert.equal(target.representation,'freetimegs');assert.equal(target.colorEncoding,'sh');assert.equal(target.shDegree,0);
-  assert.equal(uploads[0].at(-1),texture.data);
+  assert.deepEqual(uploads[0].at(-1),texture.data);
+  assert.equal(uploads[0].at(-1).buffer,texture.data.buffer);
   assert.equal(loader.calculateVertexCount(texture.buffer,32,1),1);
   assert.throws(()=>loader.calculateVertexCount(texture.buffer,32,1000000),/gaussian_count/);
 
@@ -91,8 +94,8 @@ export async function verifyLegacyContract() {
   ]));
   const shUploads=source=>{
     const out=[];
-    const {createSHTexture}=moduleVM(source,['createSHTexture'],{Float32Array});
-    const gl=new Proxy({createTexture:()=>({}),texImage2D:(...args)=>out.push(args.at(-1))},{get:(target,key)=>target[key]??(()=>{})});
+    const {createSHTexture}=moduleVM(source,['createSHTexture'],{Float32Array,createDataTextureArray});
+    const gl=new Proxy({NO_ERROR:0,getError:()=>0,getParameter:()=>16384,createTexture:()=>({}),texSubImage3D:(...args)=>out.push(args.at(-1)),texImage2D:(...args)=>out.push(args.at(-1))},{get:(target,key)=>target[key]??(()=>{})});
     assert.equal(createSHTexture(gl,vertices,0),null);
     for(const degree of [1,2,3]) createSHTexture(gl,vertices,degree);
     return out;

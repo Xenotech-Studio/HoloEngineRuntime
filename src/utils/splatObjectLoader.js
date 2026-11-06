@@ -1,3 +1,4 @@
+import { createDataTextureArray, deleteDataTexture } from './dataTextureArray';
 /**
  * Splat对象加载工具函数（HoloEngineRuntime 内置）
  */
@@ -6,17 +7,8 @@ import { createDepthWorker } from './depthWorker';
 import { getGLErrorName } from '../core/utils/webgl';
 
 export function createSplatTexture(gl, textureData) {
-  const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-  if (textureData.width > max || textureData.height > max) throw new Error('Splat texture exceeds MAX_TEXTURE_SIZE');
-  const texture = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, textureData.width, textureData.height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, textureData.data);
-  return texture;
+  return createDataTextureArray(gl, textureData.data, textureData.width, false, {stride: textureData.gaussStridePixels || 4});
 }
 
 export function createSplatIndexBuffer(gl) {
@@ -116,6 +108,12 @@ export function createStandardWorkerMessageHandler({ gl, indexBuffer, targetObje
 
 export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirstDepthSort, onWorkerError, onWebGLError }) {
   if (!gl || !textureData) throw new Error('loadAndSetupSplatObject: gl and textureData are required');
+  if (targetObject) {
+    targetObject.disposeGpu?.();
+    targetObject.ready = false;
+    targetObject.texture = null;
+    targetObject.shTexture = null;
+  }
   const gaussStridePixels = textureData.gaussStridePixels || 4;
   const precisionVariant = textureData.precisionVariant || 'lite';
   const texture = createSplatTexture(gl, textureData);
@@ -130,6 +128,11 @@ export function loadAndSetupSplatObject({ gl, textureData, targetObject, onFirst
   const vertexCount = calculateVertexCount(textureData.buffer, gaussStridePixels, textureData.gaussianCount);
   const worker = createSplatWorker(textureData.buffer, workerMessageHandler, onWorkerError, gaussStridePixels, textureData);
   if (targetObject) {
+    targetObject.disposeGpu = () => {
+      worker.terminate();
+      deleteDataTexture(gl, texture);
+      gl.deleteBuffer(indexBuffer);
+    };
     targetObject.texture = texture;
     targetObject.textureWidth = textureData.width;
     targetObject.textureHeight = textureData.height;

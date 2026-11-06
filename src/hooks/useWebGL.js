@@ -1,3 +1,4 @@
+import { dataTextureUnits } from '../utils/dataTextureArray';
 import { useEffect, useRef, useState } from 'react';
 import { createShader, createProgram } from '../core/utils/webgl';
 import { ShaderRegistry } from '../core/utils/ShaderRegistry';
@@ -49,6 +50,9 @@ export function useWebGL(canvasRef, options = {}) {
         throw new Error('WebGL2 not supported');
       }
 
+      if (dataTextureUnits(glContext) < 1) throw new Error('Insufficient vertex texture units');
+      // Keep one-sampler programs here; HoloRP lazily specializes only objects
+      // whose uploads need multiple texture slabs.
       // 创建 ShaderRegistry
       const shaderRegistry = new ShaderRegistry(glContext);
       shaderRegistryRef.current = shaderRegistry;
@@ -207,9 +211,7 @@ export function useWebGL(canvasRef, options = {}) {
         gaussianScaleLerp: glContext.getUniformLocation(shaderProgram, 'u_gaussianScaleLerp'),
         gaussianScaleMin: glContext.getUniformLocation(shaderProgram, 'u_gaussianScaleMin'),
         texture: glContext.getUniformLocation(shaderProgram, 'u_texture'),
-        strideColMask: glContext.getUniformLocation(shaderProgram, 'u_strideColMask'),
         strideColShift: glContext.getUniformLocation(shaderProgram, 'u_strideColShift'),
-        strideRowShift: glContext.getUniformLocation(shaderProgram, 'u_strideRowShift'),
         useHpScaleRot: glContext.getUniformLocation(shaderProgram, 'u_useHpScaleRot'),
         kiriv: glContext.getUniformLocation(shaderProgram, 'u_kiriv'),
         freetimegs: glContext.getUniformLocation(shaderProgram, 'u_freetimegs'),
@@ -320,7 +322,7 @@ export function useWebGL(canvasRef, options = {}) {
 
       // 设置纹理
       const texture = glContext.createTexture();
-      glContext.bindTexture(glContext.TEXTURE_2D, texture);
+      glContext.bindTexture(glContext.TEXTURE_2D_ARRAY, texture);
       glContext.uniform1i(uniformsRef.current.texture, 0);
 
       setGl(glContext);

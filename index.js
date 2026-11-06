@@ -60,3 +60,5 @@ export { SceneManager, SplatObject } from './src/utils/sceneManager';
 
 // Shaders（供 XR / 自定义渲染使用，splat 4DGS）
 export { vertexShaderSource, fragmentShaderSource } from './src/shaders/splatShaders';
+
+export { deleteDataTexture } from './src/utils/dataTextureArray';

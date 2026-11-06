@@ -59,7 +59,29 @@ node tests/validate-kiriv.mjs /absolute/path/model.kiriv
 
 The runtime currently expands v2 to 512 bytes/Gaussian plus row padding; all
 layouts share this GPU representation. Input or decoded textures exceeding the
-implementation's 1 GiB limit or hardware MAX_TEXTURE_SIZE fail explicitly.
+implementation's 1 GiB limit fail explicitly. GPU records are uploaded as a
+2D texture array with each layer bounded by the device's MAX_TEXTURE_SIZE.
+The runtime also splits records into separate texture objects, initially capped
+at 512 MiB each. ANGLE's `Caps.h` documents a 1280 MiB per-texture cap (formerly
+1024 MiB); legal width/height/layers alone do not guarantee a legal allocation.
+An INVALID_OPERATION during allocation deletes the partial plan and halves the
+budget, up to four attempts. Successful budgets are cached per WebGL context.
+OUT_OF_MEMORY and context loss fail explicitly. No records or precision are reduced.
+
+Each attribute set supports at most eight texture objects, additionally bounded
+by vertex/fragment/combined sampler limits with two units reserved. PLY and SH
+share that unit budget. A 25,430,016-point lite model uses four textures at 512 MiB
+(three full 4096x8192x1 slabs and one 4096x258x1 slab), or seven at 256 MiB
+(six 4096x4096x1 slabs and one 4096x258x1 slab), on either 8192 or 16384 hardware.
+If a driver requires 128 MiB, that model needs 13 samplers and fails explicitly
+rather than dropping points. Single-object textures retain the one-sampler shader;
+multi-object shaders are compiled lazily with literal sampler-selection branches.
+The pre-existing ordinary PLY SH evaluation remains a stub; this change preserves
+its rendering behavior while making SH storage and fetch addressing slab-aware.
+
+Full payload and sort-worker memory costs still apply, and a simultaneous thumbnail
+preview uses a separate context and model allocation. Texture splitting addresses
+per-object allocation caps, not exhaustion of total system/GPU memory.
 No active-set optimization, compressed transport or chunk streaming is claimed.
 CPU formula/SH validation and offline GLSL compilation are not pixel validation;
 visual acceptance needs an available WebGL2 device and matching reference cameras.

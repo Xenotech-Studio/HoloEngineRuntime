@@ -1,3 +1,4 @@
+import { dataTextureShader } from './dataTextureShader.js';
 /**
  * 4DGS Splat Shader（含 motion，Holotech 同源）
  * 原 Holotech src/shaders.js
@@ -8,7 +9,7 @@ export const vertexShaderSource = `
   precision highp float;
   precision highp int;
 
-  uniform highp usampler2D u_texture;
+  ${dataTextureShader('u_texture')}
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
@@ -20,16 +21,10 @@ export const vertexShaderSource = `
   uniform float time;
   uniform float u_gaussianScaleLerp;
   uniform float u_gaussianScaleMin;
-  // splatv 精度变体支持。
-  //   stride=4 pixels/gauss (16 u32) — lite (默认): 1024 gauss/row,
-  //       columnMask=0x3FFu, columnShift=2, rowShift=10.
-  //   stride=8 pixels/gauss (32 u32) — hp_scale_rot: 512 gauss/row,
-  //       columnMask=0x1FFu, columnShift=3, rowShift=9. 在 pixel 4-5 (u32 16..22) 增量
-  //       保存 fp32 rotation + fp32 scale, pixel 0-3 与 lite bit-equivalent.
-  //   u_useHpScaleRot=true 时 shader 从 pixel 4-5 读 fp32 rot/scale 代替 fp16 fallback.
-  uniform uint u_strideColMask;
+  // Linear record stride: lite=4, hp_scale_rot=8, KiriV=32 RGBA texels.
+  // textureSize supplies the physical array layout; CPU row padding is preserved.
+  // Addressing only needs the stride shift, including across layer boundaries.
   uniform int  u_strideColShift;
-  uniform int  u_strideRowShift;
   uniform bool u_useHpScaleRot;
   uniform bool u_kiriv;
   uniform bool u_freetimegs;
@@ -44,15 +39,9 @@ export const vertexShaderSource = `
   uniform float quadTailSigma;
   out vec2 vPosition;
 
-  ivec2 gaussCoord(uint subPixel) {
-      // 把 gauss index + sub-pixel 偏移转成纹理坐标。
-      uint col = ((uint(index) & u_strideColMask) << uint(u_strideColShift)) | subPixel;
-      uint row = uint(index) >> uint(u_strideRowShift);
-      return ivec2(int(col), int(row));
-  }
 
   float kv(uint word) {
-      uvec4 value = texelFetch(u_texture, gaussCoord(word >> 2u), 0);
+      uvec4 value = fetch_u_texture(uint(index), word >> 2u, (1u << uint(u_strideColShift)));
       return uintBitsToFloat(value[int(word & 3u)]);
   }
 
@@ -89,7 +78,7 @@ export const vertexShaderSource = `
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
-      uvec4 motion1 = texelFetch(u_texture, gaussCoord(3u), 0);
+      uvec4 motion1 = fetch_u_texture(uint(index), 3u, (1u << uint(u_strideColShift)));
       vec2 trbf = u_kiriv ? vec2(kv(11u), kv(12u)) : unpackHalf2x16(motion1.w);
       float dt = time - trbf.x;
 
@@ -104,8 +93,8 @@ export const vertexShaderSource = `
           if (topacityCull < motionAlphaCutoff) return;
       }
 
-      uvec4 motion0 = texelFetch(u_texture, gaussCoord(2u), 0);
-      uvec4 static0 = texelFetch(u_texture, gaussCoord(0u), 0);
+      uvec4 motion0 = fetch_u_texture(uint(index), 2u, (1u << uint(u_strideColShift)));
+      uvec4 static0 = fetch_u_texture(uint(index), 0u, (1u << uint(u_strideColShift)));
 
       vec2 m0 = unpackHalf2x16(motion0.x), m1 = unpackHalf2x16(motion0.y), m2 = unpackHalf2x16(motion0.z), 
            m3 = unpackHalf2x16(motion0.w), m4 = unpackHalf2x16(motion1.x); 
@@ -126,7 +115,7 @@ export const vertexShaderSource = `
   
       float clip = 1.2 * pos.w;
       if (pos.z < -clip || pos.x < -clip || pos.x > clip || pos.y < -clip || pos.y > clip) return;
-      uvec4 static1 = texelFetch(u_texture, gaussCoord(1u), 0);
+      uvec4 static1 = fetch_u_texture(uint(index), 1u, (1u << uint(u_strideColShift)));
 
       uint rgba = static1.w;
       vec4 splat = vec4(
@@ -163,8 +152,8 @@ export const vertexShaderSource = `
       } else if (u_useHpScaleRot) {
           // hp_scale_rot: pixel 4 (u32[16..19]) = fp32 rotation (wxyz)
           //               pixel 5 (u32[20..22]) = fp32 scale (xyz), u32[23] = pad
-          uvec4 hpRot = texelFetch(u_texture, gaussCoord(4u), 0);
-          uvec4 hpScl = texelFetch(u_texture, gaussCoord(5u), 0);
+          uvec4 hpRot = fetch_u_texture(uint(index), 4u, (1u << uint(u_strideColShift)));
+          uvec4 hpScl = fetch_u_texture(uint(index), 5u, (1u << uint(u_strideColShift)));
           rot = vec4(uintBitsToFloat(hpRot.x), uintBitsToFloat(hpRot.y),
                      uintBitsToFloat(hpRot.z), uintBitsToFloat(hpRot.w)) + trot;
           gaussianScale = vec3(uintBitsToFloat(hpScl.x), uintBitsToFloat(hpScl.y), uintBitsToFloat(hpScl.z));

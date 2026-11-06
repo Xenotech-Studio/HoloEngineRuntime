@@ -1,3 +1,4 @@
+import { dataTextureShader } from './dataTextureShader.js';
 // 3DGS Shader（静态高斯，原 Holotech shaders/gaussian3dShaders.js）
 
 export const vertexShader3DGSSource = `
@@ -5,8 +6,8 @@ export const vertexShader3DGSSource = `
   precision highp float;
   precision highp int;
   
-  uniform highp usampler2D u_texture;
-  uniform highp sampler2D u_shTexture;
+  ${dataTextureShader('u_texture')}
+  ${dataTextureShader('u_shTexture', 1, true)}
   uniform mat4 projection, view, model;
   uniform vec2 focal;
   uniform vec2 viewport;
@@ -28,12 +29,13 @@ export const vertexShader3DGSSource = `
     return vec3(1.0);
   }
   
+
   void main () {
       gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       float scaleT = clamp(u_gaussianScaleLerp, 0.0, 1.0);
 
-      uvec4 static0 = texelFetch(u_texture, ivec2(((uint(index) & 0xffu) << 2), uint(index) >> 8), 0);
-      uvec4 static1 = texelFetch(u_texture, ivec2(((uint(index) & 0xffu) << 2) | 1u, uint(index) >> 8), 0);
+      uvec4 static0 = fetch_u_texture(uint(index), 0u, 4u);
+      uvec4 static1 = fetch_u_texture(uint(index), 1u, 4u);
 
       vec3 pos = uintBitsToFloat(static0.xyz);
       vec4 cam = view * model * vec4(pos, 1);

@@ -42,7 +42,8 @@ export class SceneManager {
       const oldObj = this.objects.get(id);
       const index = this.objectList.indexOf(oldObj);
       if (index > -1) this.objectList.splice(index, 1);
-      if (oldObj.worker) oldObj.worker.terminate();
+      if (oldObj.disposeGpu) oldObj.disposeGpu();
+      else if (oldObj.worker) oldObj.worker.terminate();
     }
     const obj = new SplatObject(id, modelUrl, position, rotation, scale, assetId, name, type);
     this.objects.set(id, obj);
@@ -64,7 +65,8 @@ export class SceneManager {
       this.objects.delete(id);
       const index = this.objectList.indexOf(obj);
       if (index > -1) this.objectList.splice(index, 1);
-      if (obj.worker) obj.worker.terminate();
+      if (obj.disposeGpu) obj.disposeGpu();
+      else if (obj.worker) obj.worker.terminate();
     }
   }
 
@@ -102,7 +104,8 @@ export class SceneManager {
 
   dispose() {
     this.objectList.forEach(obj => {
-      if (obj.worker) obj.worker.terminate();
+      if (obj.disposeGpu) obj.disposeGpu();
+      else if (obj.worker) obj.worker.terminate();
     });
     this.objects.clear();
     this.objectList = [];

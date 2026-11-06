@@ -1,3 +1,4 @@
+import { dataTextureVariant } from './dataTextureBinding';
 /**
  * Holo 渲染管线 - 核心渲染逻辑
  * 只负责渲染多个模型和处理视角变换，不包含业务逻辑（如模型加载、用户交互等）
@@ -1013,12 +1014,12 @@ export class HoloRP {
 
       // 绑定该对象的纹理
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, obj.texture);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, obj.texture);
       
       // 3DGS需要绑定SH纹理（如果存在）
       if (!is4DGS && obj.shTexture && activeUniforms.shTexture) {
         gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, obj.shTexture);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, obj.shTexture);
         gl.uniform1i(activeUniforms.shTexture, 1);
       }
       
@@ -1027,14 +1028,12 @@ export class HoloRP {
         gl.uniform1i(activeUniforms.sphericalHarmonicsDegree, obj.sphericalHarmonicsDegree || 0);
       }
 
-      // 4DGS splatv 精度变体: 把每个对象的 gauss stride / hp_scale_rot 标志推到 shader
-      // u_strideColMask / u_strideColShift / u_strideRowShift / u_useHpScaleRot uniforms 上.
-      // 默认 stride=4 (lite), hp=false; obj.gaussStridePixels=8 + obj.precisionVariant='hp_scale_rot' 时切到 hp 路径.
+      // Only the record stride is a uniform. Physical rows/layers come from
+      // textureSize in the shader, never the file's declared dimensions.
       if (is4DGS) {
         const kiriv = obj.precisionVariant === 'kiriv_f32';
         const strideP = kiriv ? 32 : obj.gaussStridePixels === 8 ? 8 : 4;
         const useHp = obj.precisionVariant === 'hp_scale_rot';
-        const width = kiriv ? obj.textureWidth : 4096;
         for (const [name, value] of Object.entries({ kiriv: kiriv ? 1 : 0,
           freetimegs: kiriv && obj.representation === 'freetimegs' ? 1 : 0,
           kirivSH: kiriv && obj.colorEncoding === 'sh' ? 1 : 0,
@@ -1042,15 +1041,8 @@ export class HoloRP {
           if (activeUniforms[name] !== undefined && activeUniforms[name] !== null) gl.uniform1i(activeUniforms[name], value);
         }
         if (activeUniforms.kirivOpacityFloor !== undefined && activeUniforms.kirivOpacityFloor !== null) gl.uniform1f(activeUniforms.kirivOpacityFloor, kiriv ? obj.opacityFloor : 0);
-        if (activeUniforms.strideColMask !== undefined && activeUniforms.strideColMask !== null) {
-          // stride=4 → 1024 gauss/row, mask=0x3FF; stride=8 → 512 gauss/row, mask=0x1FF
-          gl.uniform1ui(activeUniforms.strideColMask, width / strideP - 1);
-        }
         if (activeUniforms.strideColShift !== undefined && activeUniforms.strideColShift !== null) {
           gl.uniform1i(activeUniforms.strideColShift, Math.log2(strideP));
-        }
-        if (activeUniforms.strideRowShift !== undefined && activeUniforms.strideRowShift !== null) {
-          gl.uniform1i(activeUniforms.strideRowShift, Math.log2(width / strideP));
         }
         if (activeUniforms.useHpScaleRot !== undefined && activeUniforms.useHpScaleRot !== null) {
           gl.uniform1i(activeUniforms.useHpScaleRot, useHp ? 1 : 0);
@@ -1069,7 +1061,14 @@ export class HoloRP {
       }
 
       // 绘制该对象
-      gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.vertexCount);
+      this._dataTextureVariants ||= new Map();
+      const baseProgram = program || this.splatProgram;
+      try {
+        dataTextureVariant(gl, this._dataTextureVariants, baseProgram, obj, is4DGS);
+        gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, obj.vertexCount);
+      } finally {
+        gl.useProgram(baseProgram);
+      }
     } catch (err) {
       console.error(`[HoloRP] 绘制 ${obj.renderType} 对象 ${obj.id} 时出错:`, err);
     }
@@ -1634,6 +1633,10 @@ export class HoloRP {
       this.defaultTexture = null;
     }
 
+    for (const variant of this._dataTextureVariants?.values() || []) gl.deleteProgram(variant.program);
+    this._dataTextureVariants?.clear();
+    // Direct preview/XR objects own uploads; scene-backed render copies do not.
+    for (const obj of this.objects.values()) obj.disposeGpu?.();
     // 清空对象列表
     this.clearObjects();
   }

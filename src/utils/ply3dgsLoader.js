@@ -5,7 +5,7 @@
 
 import { createStandardWorkerMessageHandler } from './splatObjectLoader';
 import { createDepthWorker } from './depthWorker';
-import { getGLErrorName } from '../core/utils/webgl';
+import { createDataTextureArray, getDataTextureSet, deleteDataTexture, dataTextureUnits } from './dataTextureArray';
 
 export function create3DGSTexture(gl, textureData) {
   if (!textureData || !textureData.data || !textureData.width || !textureData.height) {
@@ -21,55 +21,15 @@ export function create3DGSTexture(gl, textureData) {
     throw new Error(`create3DGSTexture: 数据格式错误，期望Uint32Array，实际${textureData.data.constructor.name}`);
   }
 
-  const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-  if (textureData.width > maxTextureSize || textureData.height > maxTextureSize) {
-    throw new Error(`create3DGSTexture: 纹理尺寸超过WebGL限制(${maxTextureSize})`);
-  }
-
-  const texture = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-  const oldAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-
-  let dataToUpload = textureData.data;
-  if (actualSize > expectedSize) {
-    dataToUpload = textureData.data.subarray(0, expectedSize);
-  }
-  if (!(dataToUpload instanceof Uint32Array) && dataToUpload instanceof Float32Array) {
-    dataToUpload = new Uint32Array(dataToUpload.buffer, dataToUpload.byteOffset, expectedSize);
-  }
-
-  try {
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RGBA32UI,
-      textureData.width, textureData.height, 0,
-      gl.RGBA_INTEGER, gl.UNSIGNED_INT,
-      dataToUpload
-    );
-  } catch (err) {
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, oldAlignment);
-    throw err;
-  }
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, oldAlignment);
-
-  const error = gl.getError();
-  if (error !== gl.NO_ERROR) {
-    throw new Error(`create3DGSTexture: WebGL错误 ${getGLErrorName(gl, error)} (${error})`);
-  }
-  return texture;
+  return createDataTextureArray(gl, textureData.data.subarray(0, expectedSize), textureData.width);
 }
 
 export function create3DGSIndexBuffer(gl) {
   return gl.createBuffer();
 }
 
-export function createSHTexture(gl, vertices, shDegree) {
+export function createSHTexture(gl, vertices, shDegree, maxTextures = 8) {
   if (shDegree === 0 || !vertices || vertices.length === 0) return null;
   const shCoeffPerChannel = shDegree === 1 ? 3 : shDegree === 2 ? 8 : shDegree === 3 ? 15 : 0;
   if (shCoeffPerChannel === 0) return null;
@@ -95,15 +55,8 @@ export function createSHTexture(gl, vertices, shDegree) {
     }
   }
 
-  const texture = gl.createTexture();
   gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, textureWidth, textureHeight, 0, gl.RGBA, gl.FLOAT, shData);
-  return texture;
+  return createDataTextureArray(gl, shData, textureWidth, true, {stride: shCoeffPerChannel, maxTextures});
 }
 
 export function create3DGSWorker(textureBuffer, vertexCount, onMessage, onError) {
@@ -119,9 +72,23 @@ export { createStandardWorkerMessageHandler } from './splatObjectLoader';
 export function loadAndSetup3DGSObject({ gl, textureData, targetObject, onFirstDepthSort, onWorkerError, onWebGLError }) {
   if (!gl || !textureData) throw new Error('loadAndSetup3DGSObject: gl and textureData are required');
 
+  if (targetObject) {
+    targetObject.disposeGpu?.();
+    targetObject.ready = false;
+    targetObject.texture = null;
+    targetObject.shTexture = null;
+  }
   const texture = create3DGSTexture(gl, textureData);
   const indexBuffer = create3DGSIndexBuffer(gl);
-  const shTexture = createSHTexture(gl, textureData.vertices, textureData.sphericalHarmonicsDegree || 0);
+  let shTexture;
+  try {
+    shTexture = createSHTexture(gl, textureData.vertices, textureData.sphericalHarmonicsDegree || 0,
+      dataTextureUnits(gl) - getDataTextureSet(texture).textures.length);
+  } catch (error) {
+    deleteDataTexture(gl, texture);
+    gl.deleteBuffer(indexBuffer);
+    throw error;
+  }
   const vertexCount = textureData.vertices ? textureData.vertices.length : 0;
 
   const workerMessageHandler = createStandardWorkerMessageHandler({
@@ -134,6 +101,12 @@ export function loadAndSetup3DGSObject({ gl, textureData, targetObject, onFirstD
   const worker = create3DGSWorker(textureData.buffer, vertexCount, workerMessageHandler, onWorkerError);
 
   if (targetObject) {
+    targetObject.disposeGpu = () => {
+      worker.terminate();
+      deleteDataTexture(gl, texture);
+      deleteDataTexture(gl, shTexture);
+      gl.deleteBuffer(indexBuffer);
+    };
     targetObject.texture = texture;
     targetObject.textureWidth = textureData.width;
     targetObject.textureHeight = textureData.height;

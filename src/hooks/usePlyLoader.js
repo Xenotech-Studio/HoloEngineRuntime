@@ -89,10 +89,6 @@ function convertPlyToTextureData(vertices, header) {
   const textureWidth = 1024;
   const totalPixels = numPoints * 4;
   const textureHeight = Math.ceil(totalPixels / textureWidth);
-  const maxTextureSize = 16384;
-  if (textureHeight > maxTextureSize) {
-    throw new Error(`纹理高度过大: ${textureHeight}，超过WebGL限制(${maxTextureSize})。点数: ${numPoints}。`);
-  }
 
   const totalElements = textureWidth * textureHeight * 4;
   const textureData = new Uint32Array(totalElements);

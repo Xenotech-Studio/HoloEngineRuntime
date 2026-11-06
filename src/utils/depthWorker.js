@@ -10,6 +10,12 @@ function createSimdSorter(bytes) {
     let source = null, pairs = 0, offset = 0, values = null;
     return {
       depths(positions, motion, centers, n, applyMotion, time, view) {
+        // SIMD duplicates 13 inputs as f64 plus one f64 depth (112 bytes/point).
+        // Bound this optional cache before memory.grow: huge models use the
+        // numerically equivalent JS path rather than risking a tab-wide OOM.
+        if (Math.ceil(n / 2) * 224 > 256 * 1024 * 1024) {
+          throw new RangeError('SIMD sort cache exceeds 256 MiB; use JS sorting');
+        }
         if (source !== positions || pairs !== Math.ceil(n / 2)) {
           pairs = Math.ceil(n / 2);
           offset = pairs * 208;
